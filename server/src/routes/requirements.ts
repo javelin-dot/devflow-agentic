@@ -278,6 +278,17 @@ requirementsRouter.patch('/:id', async (c) => {
   return c.json(parseReq(updated));
 });
 
+// POST /requirements/:id/archive
+requirementsRouter.post('/:id/archive', (c) => {
+  const { id } = c.req.param();
+  const row = db.prepare('SELECT * FROM requirements WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+  if (!row) return c.json({ error: 'not found' }, 404);
+  const now = new Date().toISOString();
+  db.prepare('UPDATE requirements SET archived_at = ? WHERE id = ?').run(now, id);
+  const updated = db.prepare('SELECT * FROM requirements WHERE id = ?').get(id) as Record<string, unknown>;
+  return c.json(parseReq(updated));
+});
+
 // POST /requirements/:id/unarchive
 requirementsRouter.post('/:id/unarchive', rbacGuard('admin'), (c) => {
   const { id } = c.req.param();

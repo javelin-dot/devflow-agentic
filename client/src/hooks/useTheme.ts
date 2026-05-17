@@ -1,39 +1,61 @@
 import { useState, useEffect, useCallback } from 'react';
 
-type Theme = 'light' | 'dark';
+type ThemeMode = 'light' | 'dark' | 'system';
 
 const STORAGE_KEY = 'devflow-theme';
 
-function getInitialTheme(): Theme | null {
+function getStoredMode(): ThemeMode {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === 'light' || stored === 'dark') return stored;
+    if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
   } catch { /* ignore */ }
-  return null;
+  return 'system';
+}
+
+function applyMode(mode: ThemeMode) {
+  const root = document.documentElement;
+  if (mode === 'system') {
+    root.removeAttribute('data-theme');
+  } else {
+    root.setAttribute('data-theme', mode);
+  }
+}
+
+function getEffectiveTheme(mode: ThemeMode): 'light' | 'dark' {
+  if (mode === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return mode;
 }
 
 export function useTheme() {
-  const [theme, setTheme] = useState<Theme | null>(getInitialTheme);
+  const [mode, setModeState] = useState<ThemeMode>(getStoredMode);
 
   useEffect(() => {
-    const root = document.documentElement;
-    if (theme) {
-      root.setAttribute('data-theme', theme);
-    } else {
-      root.removeAttribute('data-theme');
-    }
-  }, [theme]);
+    applyMode(mode);
+  }, [mode]);
+
+  const setMode = useCallback((next: ThemeMode) => {
+    try {
+      if (next === 'system') {
+        localStorage.removeItem(STORAGE_KEY);
+      } else {
+        localStorage.setItem(STORAGE_KEY, next);
+      }
+    } catch { /* ignore */ }
+    setModeState(next);
+  }, []);
 
   const toggle = useCallback(() => {
-    setTheme((prev) => {
-      const resolved = prev ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    setModeState((prev) => {
+      const resolved = getEffectiveTheme(prev);
       const next = resolved === 'dark' ? 'light' : 'dark';
       try { localStorage.setItem(STORAGE_KEY, next); } catch { /* ignore */ }
       return next;
     });
   }, []);
 
-  const effectiveTheme: Theme = theme ?? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const effectiveTheme = getEffectiveTheme(mode);
 
-  return { theme, effectiveTheme, toggle };
+  return { mode, effectiveTheme, toggle, setMode };
 }

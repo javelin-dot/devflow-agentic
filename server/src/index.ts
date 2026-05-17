@@ -25,6 +25,7 @@ import { attachmentsRouter } from './routes/attachments.js';
 import { notificationsRouter } from './routes/notifications.js';
 import { specsRouter } from './routes/specs.js';
 import { authRouter } from './routes/auth.js';
+import { fsRouter } from './routes/fs.js';
 import { authGuard } from './middleware/auth.js';
 import { db } from './db/index.js';
 import { handleTerminalWS } from './routes/terminal.js';
@@ -37,6 +38,7 @@ app.use('*', authGuard);
 
 app.route('/api/auth', authRouter);
 app.route('/api/requirements', requirementsRouter);
+app.route('/api/fs', fsRouter);
 app.route('/api/settings', settingsRouter);
 app.route('/api/events', eventsRouter);
 app.route('/api/projects', projectsRouter);

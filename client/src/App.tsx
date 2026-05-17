@@ -15,10 +15,12 @@ import { ArchiveView } from './views/ArchiveView';
 import { SettingsView } from './views/SettingsView';
 import { LoginView } from './views/LoginView';
 import { TerminalPanel } from './views/TerminalPanel';
+import { RequirementListView } from './views/RequirementListView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastContainer } from './components/ui';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { ShortcutsHelpPanel } from './components/ShortcutsHelpPanel';
+import { RequirementDetailModal } from './components/RequirementDetailModal';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
 import { apiFetch } from './api/client';
@@ -28,12 +30,13 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 5000, refetchOnWindowFocus: false, retry: 1 } },
 });
 
-export type View = 'board' | 'workspace' | 'activity' | 'projects' | 'archive' | 'release' | 'quickpublish' | 'logs' | 'testing' | 'defects' | 'dashboard' | 'settings' | 'terminal';
+export type View = 'board' | 'req_detail' | 'workspace' | 'activity' | 'projects' | 'archive' | 'release' | 'quickpublish' | 'logs' | 'testing' | 'defects' | 'dashboard' | 'settings' | 'terminal';
 
 function AppInner() {
   useTheme();
   const [view, setView] = useState<View>('board');
   const [selectedReq, setSelectedReq] = useState<Requirement | null>(null);
+  const [previewReq, setPreviewReq] = useState<Requirement | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem('devflow_token'));
@@ -60,6 +63,7 @@ function AppInner() {
   const handleNavigate = useCallback((v: string) => {
     setView(v as View);
     if (v !== 'workspace') setSelectedReq(null);
+    if (v !== 'req_detail') setPreviewReq(null);
   }, []);
 
   const handleHelp = useCallback(() => {
@@ -79,12 +83,29 @@ function AppInner() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
-      <NavSidebar view={view} onViewChange={(v) => { setView(v as View); if (v !== 'workspace') setSelectedReq(null); }} />
+      <NavSidebar view={view} onViewChange={(v) => { setView(v as View); if (v !== 'workspace') setSelectedReq(null); if (v !== 'req_detail') setPreviewReq(null); }} />
       <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {view === 'board' && (
           <ErrorBoundary viewName="看板">
             <BoardView
               onOpenReq={(req) => { setSelectedReq(req); setView('workspace'); }}
+              onPreviewReq={(req) => { setPreviewReq(req); setView('req_detail'); }}
+            />
+          </ErrorBoundary>
+        )}
+        {view === 'req_detail' && !previewReq && (
+          <ErrorBoundary viewName="需求列表">
+            <RequirementListView
+              onSelectReq={(req) => setPreviewReq(req)}
+            />
+          </ErrorBoundary>
+        )}
+        {view === 'req_detail' && previewReq && (
+          <ErrorBoundary viewName="需求详情">
+            <RequirementDetailModal
+              req={previewReq}
+              onClose={() => setPreviewReq(null)}
+              onOpenAI={(req) => { setPreviewReq(null); setSelectedReq(req); setView('workspace'); }}
             />
           </ErrorBoundary>
         )}
@@ -153,7 +174,6 @@ function AppInner() {
         )}
       </main>
 
-      {/* Modals */}
       {showOnboarding && (
         <OnboardingWizard onComplete={() => setShowOnboarding(false)} />
       )}

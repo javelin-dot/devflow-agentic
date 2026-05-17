@@ -27,9 +27,10 @@ function formatSize(n: number): string {
 
 interface AttachmentsPanelProps {
   reqId: string;
+  embedded?: boolean;
 }
 
-export function AttachmentsPanel({ reqId }: AttachmentsPanelProps) {
+export function AttachmentsPanel({ reqId, embedded }: AttachmentsPanelProps) {
   const { data: attachments = [], isLoading } = useAttachmentsV2(reqId);
   const upload = useUploadAttachmentV2();
   const del = useDeleteAttachmentV2();
@@ -46,7 +47,7 @@ export function AttachmentsPanel({ reqId }: AttachmentsPanelProps) {
   const others = attachments.filter(a => !isImage(a.mime));
 
   return (
-    <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-default)' }}>
+    <div style={embedded ? { padding: 0 } : { padding: '8px 12px', borderBottom: '1px solid var(--border-default)' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 }}>附件 {attachments.length}</span>
         <button

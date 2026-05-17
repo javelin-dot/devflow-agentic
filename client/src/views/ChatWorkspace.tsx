@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Check, X, Pencil, Plus } from 'lucide-react';
+import { Check, X, Pencil, Plus, FileText, BookOpen, ListChecks, GitBranch, ArrowUp, Sparkles, ChevronRight, Info } from 'lucide-react';
 import { UiSelect } from '../components/ui';
 import { useSessions, useCreateSession, usePatchSession, useDeleteSession, useMessages, useAgentAvailability, useSettings, useAttachmentsV2, useDeleteMessage, useDeleteMessages } from '../api/hooks';
 import { AttachmentsPanel } from '../components/AttachmentsPanel';
@@ -19,7 +19,7 @@ interface EntryRowProps {
   onDelete?: () => void;
 }
 
-function EntryRow({ msg, sessionId, selectMode, selected, onSelect, onDelete }: EntryRowProps) {
+function EntryRow({ msg, sessionId, selectMode, selected, onDelete }: EntryRowProps) {
   const isUser = msg.role === 'user';
   const isToolUse = msg.entryType === 'tool_use';
   const isThinking = msg.entryType === 'thinking';
@@ -92,9 +92,9 @@ function EntryRow({ msg, sessionId, selectMode, selected, onSelect, onDelete }: 
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        padding: '8px 12px',
-        marginBottom: 4,
-        borderRadius: 6,
+        padding: '10px 14px',
+        marginBottom: 6,
+        borderRadius: 10,
         background: bgColor,
         border: `1px solid ${selected ? 'var(--accent-blue)' : borderColor}`,
         opacity: msg.status === 'error' ? 0.7 : 1,
@@ -134,7 +134,7 @@ function EntryRow({ msg, sessionId, selectMode, selected, onSelect, onDelete }: 
           </button>
         )}
       </div>
-      <div style={{ fontSize: 13, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: isToolUse ? 'monospace' : 'inherit' }}>
+      <div style={{ fontSize: 14, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: isToolUse ? 'monospace' : 'inherit', lineHeight: 1.6 }}>
         {renderContent()}
       </div>
       {msg.status === 'pending' && isToolUse && (
@@ -166,7 +166,31 @@ function isTextFile(name: string) {
   return TEXT_EXTS.some(ext => lower.endsWith(ext));
 }
 
-function ChatPanel({ session, reqId, onClose }: { session: ChatSession; reqId: string; onClose: () => void }) {
+const QUICK_CHIP: React.CSSProperties = {
+  fontSize: 12,
+  padding: '5px 10px',
+  borderRadius: 12,
+  border: '1px solid var(--border-default)',
+  background: 'transparent',
+  color: 'var(--text-secondary)',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+};
+
+type OutputMode = 'chat' | 'spec' | 'design' | 'tasks';
+
+function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAutoPromptConsumed, initialMode }: {
+  session: ChatSession;
+  reqId: string;
+  req: Requirement;
+  onClose: () => void;
+  onOpenPanel: (panel: 'spec' | 'design' | 'tasks' | 'analysis') => void;
+  autoPrompt?: string;
+  onAutoPromptConsumed?: () => void;
+  initialMode?: OutputMode;
+}) {
   const { data: messages = [], refetch } = useMessages(session.id);
   const { data: attachmentsData } = useAttachmentsV2(reqId);
   const [prompt, setPrompt] = useState('');
@@ -188,8 +212,6 @@ function ChatPanel({ session, reqId, onClose }: { session: ChatSession; reqId: s
   const allMsgs = [...messages, ...liveEntries];
   const persistedIds = new Set(messages.map(m => m.id));
 
-  // Group messages: each id maps to the array of all ids in its conversation turn.
-  // A turn starts with a user or main agent message; tool/thinking/plan/todo entries are children.
   const msgGroupMap = (() => {
     const map = new Map<string, string[]>();
     let group: string[] = [];
@@ -212,7 +234,6 @@ function ChatPanel({ session, reqId, onClose }: { session: ChatSession; reqId: s
     setSelectedIds(prev => {
       const next = new Set(prev);
       if (isGroupParent) {
-        // Select/deselect the whole group together
         const allSelected = groupIds.every(gid => next.has(gid));
         if (allSelected) groupIds.forEach(gid => next.delete(gid));
         else groupIds.forEach(gid => next.add(gid));
@@ -247,37 +268,9 @@ function ChatPanel({ session, reqId, onClose }: { session: ChatSession; reqId: s
     });
   };
 
-  const sendMessage = async () => {
-    if (!prompt.trim() || running) return;
-    let fullPrompt = prompt.trim();
-    setPrompt('');
+  const runAgent = async (fullPrompt: string) => {
     setRunning(true);
     setLiveEntries([]);
-
-    // Fetch selected attachment contents and prepend to prompt
-    if (selectedFiles.size > 0) {
-      const filesToFetch = attachmentFiles.filter((f: { filename: string; size: number }) => selectedFiles.has(f.filename) && f.size <= MAX_ATTACHMENT_SIZE);
-      const totalSize = filesToFetch.reduce((sum: number, f: { size: number }) => sum + f.size, 0);
-      if (totalSize <= MAX_TOTAL_ATTACHMENTS && filesToFetch.length > 0) {
-        const contents = await Promise.all(
-          filesToFetch.map(async (f: { id: string; filename: string }) => {
-            try {
-              const res = await fetch(`/api/attachments/${f.id}/raw`);
-              if (!res.ok) return null;
-              const text = await res.text();
-              return { name: f.filename, text };
-            } catch {
-              return null;
-            }
-          })
-        );
-        const valid = contents.filter((c): c is { name: string; text: string } => c !== null);
-        if (valid.length > 0) {
-          const context = valid.map(c => `<attachment filename="${c.name}">\n${c.text}\n</attachment>`).join('\n\n');
-          fullPrompt = `${context}\n\n${fullPrompt}`;
-        }
-      }
-    }
 
     try {
       const resp = await fetch('/api/agent/run', {
@@ -306,7 +299,6 @@ function ChatPanel({ session, reqId, onClose }: { session: ChatSession; reqId: s
               setLiveEntries(prev => {
                 const idx = prev.findIndex(m => m.id === e.id);
                 if (idx >= 0) {
-                  // Append to existing entry (streaming delta)
                   const updated = [...prev];
                   updated[idx] = { ...updated[idx], content: updated[idx].content + e.content };
                   return updated;
@@ -341,153 +333,384 @@ function ChatPanel({ session, reqId, onClose }: { session: ChatSession; reqId: s
     }
   };
 
+  useEffect(() => {
+    if (autoPrompt && !running) {
+      const text = autoPrompt;
+      onAutoPromptConsumed?.();
+      runAgent(text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPrompt]);
+
+  const didAutoMode = useRef(false);
+  useEffect(() => {
+    if (didAutoMode.current || !initialMode || initialMode === 'chat' || running) return;
+    didAutoMode.current = true;
+    if (initialMode === 'spec') { setMode('chat'); runGenerateSpec(); }
+    else if (initialMode === 'design') { setMode('chat'); runGenerateDesign(); }
+    else if (initialMode === 'tasks') { setMode('chat'); runAgent('请查看并汇报当前需求的任务进度，包括各子任务的状态和完成情况。'); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const sendMessage = async () => {
+    if (!prompt.trim() || running) return;
+    let fullPrompt = prompt.trim();
+    setPrompt('');
+
+    if (selectedFiles.size > 0) {
+      const filesToFetch = attachmentFiles.filter((f: { filename: string; size: number }) => selectedFiles.has(f.filename) && f.size <= MAX_ATTACHMENT_SIZE);
+      const totalSize = filesToFetch.reduce((sum: number, f: { size: number }) => sum + f.size, 0);
+      if (totalSize <= MAX_TOTAL_ATTACHMENTS && filesToFetch.length > 0) {
+        const contents = await Promise.all(
+          filesToFetch.map(async (f: { id: string; filename: string }) => {
+            try {
+              const res = await fetch(`/api/attachments/${f.id}/raw`);
+              if (!res.ok) return null;
+              const text = await res.text();
+              return { name: f.filename, text };
+            } catch {
+              return null;
+            }
+          })
+        );
+        const valid = contents.filter((c): c is { name: string; text: string } => c !== null);
+        if (valid.length > 0) {
+          const context = valid.map(c => `<attachment filename="${c.name}">\n${c.text}\n</attachment>`).join('\n\n');
+          fullPrompt = `${context}\n\n${fullPrompt}`;
+        }
+      }
+    }
+
+    await runAgent(fullPrompt);
+  };
+
+  const showAnalysis = req.stage === 'analyzing' || req.stage === 'backlog';
+  const showTasks = req.stage === 'development' || req.stage === 'uat' || req.stage === 'prerelease' || req.stage === 'released' || req.stage === 'analyzing';
+
+  const [mode, setMode] = useState<OutputMode>(initialMode ?? 'chat');
+
+  const runGenerateSpec = async () => {
+    setRunning(true);
+    const tempId = `gen-spec-${Date.now()}`;
+    setLiveEntries([{
+      id: tempId,
+      sessionId: session.id,
+      role: 'assistant',
+      content: '正在生成需求 Spec...',
+      entryType: 'thinking',
+      createdAt: new Date().toISOString(),
+    }]);
+    try {
+      const resp = await fetch('/api/specs/requirement/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reqId: req.id, agent: session.agent }),
+      });
+      const reader = resp.body!.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const chunks = buf.split('\n\n');
+        buf = chunks.pop() ?? '';
+        for (const chunk of chunks) {
+          const line = chunk.replace(/^data: /, '').trim();
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.type === 'entry' && evt.entry?.type === 'thinking') {
+              setLiveEntries(prev => prev.map(e =>
+                e.id === tempId ? { ...e, content: '正在生成需求 Spec...\n\n' + evt.entry.content } : e
+              ));
+            }
+          } catch { /* ignore */ }
+        }
+      }
+      setLiveEntries(prev => prev.map(e =>
+        e.id === tempId ? { ...e, content: '需求 Spec 生成完成 ✅\n\n您可以在右侧「需求 Spec」面板查看和编辑。' } : e
+      ));
+    } catch {
+      setLiveEntries(prev => prev.map(e =>
+        e.id === tempId ? { ...e, content: '需求 Spec 生成失败 ❌' } : e
+      ));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const runGenerateDesign = async () => {
+    setRunning(true);
+    const tempId = `gen-design-${Date.now()}`;
+    setLiveEntries([{
+      id: tempId,
+      sessionId: session.id,
+      role: 'assistant',
+      content: '正在生成设计 Spec...',
+      entryType: 'thinking',
+      createdAt: new Date().toISOString(),
+    }]);
+    try {
+      const resp = await fetch('/api/specs/design/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reqId: req.id, agent: session.agent }),
+      });
+      const reader = resp.body!.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const chunks = buf.split('\n\n');
+        buf = chunks.pop() ?? '';
+        for (const chunk of chunks) {
+          const line = chunk.replace(/^data: /, '').trim();
+          if (!line) continue;
+          try {
+            const evt = JSON.parse(line);
+            if (evt.type === 'entry' && evt.entry?.type === 'thinking') {
+              setLiveEntries(prev => prev.map(e =>
+                e.id === tempId ? { ...e, content: '正在生成设计 Spec...\n\n' + evt.entry.content } : e
+              ));
+            }
+          } catch { /* ignore */ }
+        }
+      }
+      setLiveEntries(prev => prev.map(e =>
+        e.id === tempId ? { ...e, content: '设计 Spec 生成完成 ✅\n\n您可以在右侧「设计 Spec」面板查看和编辑。' } : e
+      ));
+    } catch {
+      setLiveEntries(prev => prev.map(e =>
+        e.id === tempId ? { ...e, content: '设计 Spec 生成失败 ❌' } : e
+      ));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const handleSend = async () => {
+    if (running) return;
+    if (mode === 'spec') {
+      setMode('chat');
+      await runGenerateSpec();
+      return;
+    }
+    if (mode === 'design') {
+      setMode('chat');
+      await runGenerateDesign();
+      return;
+    }
+    if (mode === 'tasks') {
+      setMode('chat');
+      setPrompt('');
+      await runAgent('请查看并汇报当前需求的任务进度，包括各子任务的状态和完成情况。');
+      return;
+    }
+    await sendMessage();
+  };
+
+  const toggleMode = (next: 'chat' | 'spec' | 'design' | 'tasks') => {
+    setMode(prev => prev === next ? 'chat' : next);
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Header */}
-      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        <span style={{ fontWeight: 600, color: 'var(--text-primary)', flex: 1, fontSize: 14 }}>{session.title || session.agent}</span>
-        <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{session.agent}</span>
-        {selectMode ? (
-          <>
+      <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+        <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 14 }}>{session.title || session.agent}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{session.agent}</span>
+          {selectMode ? (
+            <>
+              <button
+                onClick={handleDeleteSelected}
+                disabled={selectedIds.size === 0 || deleteMsgs.isPending}
+                style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--accent-red-44)', background: 'var(--diff-del-bg)', color: 'var(--accent-red)', cursor: selectedIds.size === 0 ? 'not-allowed' : 'pointer' }}
+              >
+                删除 ({selectedIds.size})
+              </button>
+              <button
+                onClick={() => { setSelectMode(false); setSelectedIds(new Set()); }}
+                style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border-default)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer' }}
+              >
+                取消
+              </button>
+            </>
+          ) : (
             <button
-              onClick={handleDeleteSelected}
-              disabled={selectedIds.size === 0 || deleteMsgs.isPending}
-              style={{
-                fontSize: 11, padding: '4px 10px', borderRadius: 4, border: '1px solid var(--accent-red-44)',
-                background: 'var(--diff-del-bg)', color: 'var(--accent-red)', cursor: selectedIds.size === 0 ? 'not-allowed' : 'pointer',
-              }}
+              onClick={() => setSelectMode(true)}
+              style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border-default)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer' }}
             >
-              删除选中 ({selectedIds.size})
+              选择
             </button>
-            <button
-              onClick={() => { setSelectMode(false); setSelectedIds(new Set()); }}
-              style={{
-                fontSize: 11, padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-default)',
-                background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer',
-              }}
-            >
-              取消
-            </button>
-          </>
-        ) : (
-          <button
-            onClick={() => setSelectMode(true)}
-            style={{
-              fontSize: 11, padding: '4px 10px', borderRadius: 4, border: '1px solid var(--border-default)',
-              background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer',
-            }}
-          >
-            选择
+          )}
+          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+            <X size={16} />
           </button>
-        )}
-        <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: 18, display: 'flex', alignItems: 'center' }}><X size={18} /></button>
+        </div>
       </div>
 
       {/* Messages */}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
-        {allMsgs.map(m => {
-          const groupIds = msgGroupMap.get(m.id) ?? [m.id];
-          const isGroupParent = groupIds[0] === m.id && groupIds.length > 1;
-          // Parent checkbox: checked only when all group members are selected
-          const isSelected = isGroupParent
-            ? groupIds.every(gid => selectedIds.has(gid))
-            : selectedIds.has(m.id);
-          return (
-            <EntryRow
-              key={m.id}
-              msg={m}
-              sessionId={session.id}
-              selectMode={selectMode}
-              selected={isSelected}
-              onSelect={() => toggleSelect(m.id)}
-              onDelete={persistedIds.has(m.id) ? () => handleDeleteSingle(m.id) : undefined}
-            />
-          );
-        })}
-        {running && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
-            <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-              {liveEntries.some(e => e.entryType === 'thinking') ? '思考中' : '生成中'}
-            </span>
-            <span style={{ display: 'flex', gap: 3 }}>
-              {[0, 1, 2].map(i => (
-                <span key={i} style={{
-                  width: 5, height: 5, borderRadius: '50%', background: 'var(--accent-blue)',
-                  animation: `typing-dot 1.2s ${i * 0.2}s infinite ease-in-out both`,
-                }} />
-              ))}
-            </span>
-          </div>
-        )}
-        <style>{`
-          @keyframes typing-dot {
-            0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-            40% { transform: scale(1); opacity: 1; }
-          }
-        `}</style>
-        <div ref={bottomRef} />
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        <div style={{ maxWidth: 800, margin: '0 auto', padding: '16px 20px' }}>
+          {allMsgs.map(m => {
+            const groupIds = msgGroupMap.get(m.id) ?? [m.id];
+            const isGroupParent = groupIds[0] === m.id && groupIds.length > 1;
+            const isSelected = isGroupParent
+              ? groupIds.every(gid => selectedIds.has(gid))
+              : selectedIds.has(m.id);
+            return (
+              <EntryRow
+                key={m.id}
+                msg={m}
+                sessionId={session.id}
+                selectMode={selectMode}
+                selected={isSelected}
+                onSelect={() => toggleSelect(m.id)}
+                onDelete={persistedIds.has(m.id) ? () => handleDeleteSingle(m.id) : undefined}
+              />
+            );
+          })}
+          {running && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
+              <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                {liveEntries.some(e => e.entryType === 'thinking') ? '思考中' : '生成中'}
+              </span>
+              <span style={{ display: 'flex', gap: 3 }}>
+                {[0, 1, 2].map(i => (
+                  <span key={i} style={{
+                    width: 5, height: 5, borderRadius: '50%', background: 'var(--accent-blue)',
+                    animation: `typing-dot 1.2s ${i * 0.2}s infinite ease-in-out both`,
+                  }} />
+                ))}
+              </span>
+            </div>
+          )}
+          <style>{`
+            @keyframes typing-dot {
+              0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+              40% { transform: scale(1); opacity: 1; }
+            }
+          `}</style>
+          <div ref={bottomRef} />
+        </div>
       </div>
 
       {/* Input */}
-      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-default)', flexShrink: 0 }}>
-        {attachmentFiles.length > 0 && (
-          <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {attachmentFiles.map((f: { filename: string; id: string }) => {
-              const display = f.filename;
-              const active = selectedFiles.has(f.filename);
-              return (
+      <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border-default)', flexShrink: 0 }}>
+        <div style={{ maxWidth: 800, margin: '0 auto' }}>
+          {attachmentFiles.length > 0 && (
+            <div style={{ marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {attachmentFiles.map((f: { filename: string; id: string }) => {
+                const display = f.filename;
+                const active = selectedFiles.has(f.filename);
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => toggleFile(f.filename)}
+                    title={active ? '点击取消引用' : '点击引用该文件'}
+                    style={{
+                      fontSize: 11,
+                      padding: '3px 8px',
+                      borderRadius: 4,
+                      border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-default)'}`,
+                      background: active ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
+                      color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {active ? <Check size={12} style={{ display: 'inline', marginRight: 2 }} /> : null}{display}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: 16, padding: '12px 16px', boxShadow: 'var(--shadow-sm)' }}>
+            <textarea
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+              placeholder="输入指令... (Enter 发送, Shift+Enter 换行)"
+              disabled={running}
+              style={{
+                width: '100%', border: 'none', background: 'transparent', outline: 'none',
+                color: 'var(--text-primary)', fontSize: 14, resize: 'none', minHeight: 48,
+                fontFamily: 'inherit', lineHeight: 1.5,
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {showAnalysis && (
+                  <button onClick={() => onOpenPanel('analysis')} style={QUICK_CHIP} onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }} onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}>
+                    <GitBranch size={11} />分析方案
+                  </button>
+                )}
                 <button
-                  key={f.id}
-                  onClick={() => toggleFile(f.filename)}
-                  title={active ? '点击取消引用' : '点击引用该文件'}
+                  onClick={() => toggleMode('spec')}
                   style={{
-                    fontSize: 11,
-                    padding: '3px 8px',
-                    borderRadius: 4,
-                    border: `1px solid ${active ? 'var(--accent-blue)' : 'var(--border-default)'}`,
-                    background: active ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
-                    color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
+                    ...QUICK_CHIP,
+                    borderColor: mode === 'spec' ? 'var(--accent-blue)' : 'var(--border-default)',
+                    color: mode === 'spec' ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                    background: mode === 'spec' ? 'var(--accent-blue-10)' : 'transparent',
                   }}
+                  onMouseEnter={e => { if (mode !== 'spec') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}}
+                  onMouseLeave={e => { if (mode !== 'spec') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}}
                 >
-                  {active ? <Check size={12} style={{ display: 'inline', marginRight: 2 }} /> : null}{display}
+                  <FileText size={11} />生成需求Spec
                 </button>
-              );
-            })}
+                <button
+                  onClick={() => toggleMode('design')}
+                  style={{
+                    ...QUICK_CHIP,
+                    borderColor: mode === 'design' ? 'var(--accent-blue)' : 'var(--border-default)',
+                    color: mode === 'design' ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                    background: mode === 'design' ? 'var(--accent-blue-10)' : 'transparent',
+                  }}
+                  onMouseEnter={e => { if (mode !== 'design') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}}
+                  onMouseLeave={e => { if (mode !== 'design') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}}
+                >
+                  <BookOpen size={11} />生成设计Spec
+                </button>
+                {showTasks && (
+                  <button
+                    onClick={() => toggleMode('tasks')}
+                    style={{
+                      ...QUICK_CHIP,
+                      borderColor: mode === 'tasks' ? 'var(--accent-blue)' : 'var(--border-default)',
+                      color: mode === 'tasks' ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                      background: mode === 'tasks' ? 'var(--accent-blue-10)' : 'transparent',
+                    }}
+                    onMouseEnter={e => { if (mode !== 'tasks') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}}
+                    onMouseLeave={e => { if (mode !== 'tasks') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}}
+                  >
+                    <ListChecks size={11} />任务进度
+                  </button>
+                )}
+              </div>
+              <button
+                onClick={handleSend}
+                disabled={running || (mode === 'chat' && !prompt.trim())}
+                style={{
+                  width: 32, height: 32, borderRadius: '50%', border: 'none',
+                  background: running || (mode === 'chat' && !prompt.trim()) ? 'var(--bg-disabled)' : 'var(--accent-blue)',
+                  color: 'var(--text-inverse)', cursor: running || (mode === 'chat' && !prompt.trim()) ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}
+              >
+                <ArrowUp size={16} />
+              </button>
+            </div>
           </div>
-        )}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <textarea
-            value={prompt}
-            onChange={e => setPrompt(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-            placeholder="输入指令... (Enter 发送, Shift+Enter 换行)"
-            disabled={running}
-            style={{
-              flex: 1, padding: '8px 12px', background: 'var(--bg-primary)', border: '1px solid var(--border-default)',
-              borderRadius: 4, color: 'var(--text-primary)', fontSize: 13, resize: 'none', minHeight: 60,
-              fontFamily: 'inherit',
-            }}
-          />
-          <button
-            onClick={sendMessage}
-            disabled={running || !prompt.trim()}
-            style={{
-              padding: '8px 16px', background: running ? 'var(--bg-disabled)' : 'var(--accent-blue)',
-              border: 'none', borderRadius: 4, color: 'var(--text-inverse)', cursor: running ? 'not-allowed' : 'pointer',
-              fontSize: 13, fontWeight: 600, alignSelf: 'flex-end',
-            }}
-          >
-            {running ? '运行中' : '发送'}
-          </button>
         </div>
       </div>
     </div>
   );
 }
-
-type WorkspaceTab = 'sessions' | 'spec' | 'design' | 'analysis' | 'tasks';
 
 interface SessionItemProps {
   session: ChatSession;
@@ -510,9 +733,9 @@ function SessionItem({ session: s, active, renaming, renameValue, onRenameValueC
       onMouseLeave={() => setHover(false)}
       onClick={onClick}
       style={{
-        padding: '8px 10px', borderRadius: 4, cursor: 'pointer', marginBottom: 2,
-        background: active ? 'var(--border-default)' : 'transparent',
-        border: active ? '1px solid var(--accent-blue)' : '1px solid transparent',
+        padding: '8px 10px', borderRadius: 6, cursor: 'pointer', marginBottom: 2,
+        background: active ? 'var(--bg-hover)' : 'transparent',
+        border: active ? '1px solid var(--accent-blue-44)' : '1px solid transparent',
         position: 'relative',
       }}
     >
@@ -563,83 +786,253 @@ function SessionItem({ session: s, active, renaming, renameValue, onRenameValueC
   );
 }
 
+function EmptyGuide({ onSend, req }: { onSend: (prompt: string) => void; req: Requirement }) {
+  const [prompt, setPrompt] = useState('');
+
+  const chips = [
+    '生成需求 Spec',
+    '生成设计 Spec',
+    '查看当前任务进度',
+    '分析需求可行性',
+    '帮我优化这段代码',
+    '总结最近的发布变更',
+  ];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      {/* Center content */}
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px' }}>
+        <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 24 }}>
+          有什么我能帮你的吗？
+        </div>
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', maxWidth: 640 }}>
+          {chips.map((text, i) => (
+            <button
+              key={i}
+              onClick={() => onSend(text)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 20,
+                border: '1px solid var(--border-default)',
+                background: 'var(--bg-secondary)',
+                color: 'var(--text-secondary)',
+                fontSize: 13,
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Input area */}
+      <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border-default)', flexShrink: 0 }}>
+        <div style={{ maxWidth: 800, margin: '0 auto' }}>
+          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: 16, padding: '12px 16px', boxShadow: 'var(--shadow-sm)' }}>
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(prompt); setPrompt(''); } }}
+              placeholder="输入指令... (Enter 发送, Shift+Enter 换行)"
+              style={{
+                width: '100%', border: 'none', background: 'transparent', outline: 'none',
+                color: 'var(--text-primary)', fontSize: 14, resize: 'none', minHeight: 48,
+                fontFamily: 'inherit', lineHeight: 1.5,
+              }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>
+                {req.title.slice(0, 30)}{req.title.length > 30 ? '…' : ''}
+              </div>
+              <button
+                onClick={() => { onSend(prompt); setPrompt(''); }}
+                disabled={!prompt.trim()}
+                style={{
+                  width: 32, height: 32, borderRadius: '50%', border: 'none',
+                  background: !prompt.trim() ? 'var(--bg-disabled)' : 'var(--accent-blue)',
+                  color: 'var(--text-inverse)', cursor: !prompt.trim() ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}
+              >
+                <ArrowUp size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WorkModeTooltip() {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+      <span
+        onMouseEnter={() => setVisible(true)}
+        onMouseLeave={() => setVisible(false)}
+        style={{ color: 'var(--text-tertiary)', cursor: 'default', display: 'flex', alignItems: 'center' }}
+      >
+        <Info size={12} />
+      </span>
+      {visible && (
+        <div style={{
+          position: 'absolute', left: 18, top: '50%', transform: 'translateY(-50%)',
+          background: 'var(--bg-primary)', border: '1px solid var(--border-default)',
+          borderRadius: 6, padding: '6px 10px', whiteSpace: 'nowrap',
+          fontSize: 11, color: 'var(--text-secondary)', boxShadow: 'var(--shadow-md)',
+          zIndex: 200, pointerEvents: 'none',
+        }}>
+          选择 Agent 本次会话的执行方式
+        </div>
+      )}
+    </div>
+  );
+}
+
+const OUTPUT_MODE_OPTIONS: { value: OutputMode; label: string; desc: string }[] = [
+  { value: 'chat', label: '普通对话', desc: '直接与 Agent 对话' },
+  { value: 'spec', label: '生成需求 Spec', desc: '梳理业务目标与功能规格' },
+  { value: 'design', label: '生成设计 Spec', desc: '生成技术方案与实现设计' },
+  { value: 'tasks', label: '开发执行', desc: '根据任务进行代码实现、调试与验证' },
+];
+
+const STAGE_AUTO_MODE: Partial<Record<string, OutputMode>> = {
+  backlog: 'spec',
+  analyzing: 'design',
+  development: 'tasks',
+};
+
 export function ChatWorkspace({ req, onClose }: { req: Requirement; onClose: () => void }) {
-  const { data: sessions = [] } = useSessions(req.id);
+  const { data: sessions = [], isSuccess: sessionsLoaded } = useSessions(req.id);
   const createSession = useCreateSession();
   const patchSession = usePatchSession();
   const deleteSession = useDeleteSession();
   const { data: avail } = useAgentAvailability();
   const { data: settings } = useSettings();
   const [activeSession, setActiveSession] = useState<ChatSession | null>(null);
+  const [showNewPanel, setShowNewPanel] = useState(false);
   const [newTitle, setNewTitle] = useState('');
+  const [newAgent, setNewAgent] = useState('');
+  const [newOutputMode, setNewOutputMode] = useState<OutputMode>('chat');
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  const [tab, setTab] = useState<WorkspaceTab>(() => {
-    if (req.stage === 'analyzing') return 'analysis';
-    if (req.stage === 'development' || req.stage === 'uat' || req.stage === 'prerelease' || req.stage === 'released') return 'tasks';
-    return 'sessions';
-  });
+  const [rightPanel, setRightPanel] = useState<'spec' | 'design' | 'tasks' | 'analysis' | null>(null);
+  const [sessionInitialMode, setSessionInitialMode] = useState<OutputMode | undefined>(undefined);
+  const didInit = useRef(false);
 
   const availableAgents = Object.entries(avail?.agents ?? {})
     .filter(([, v]) => v.present)
     .map(([k]) => k);
 
-  const [newAgent, setNewAgent] = useState('');
+  const [autoPrompt, setAutoPrompt] = useState<string | null>(null);
 
-  const handleCreate = () => {
-    // Only use settings.defaultAgent if it's actually available; otherwise prefer claude-api
+  const resolveAgent = (overrideAgent?: string) => {
     const settingsAgent = settings?.defaultAgent;
     const fallbackAgent = availableAgents.includes('claude-api') ? 'claude-api' : availableAgents[0] ?? 'claude-code';
-    const defaultAgent = (settingsAgent && availableAgents.includes(settingsAgent))
-      ? settingsAgent
-      : fallbackAgent;
-    const agent = newAgent || defaultAgent;
+    const defaultAgent = (settingsAgent && availableAgents.includes(settingsAgent)) ? settingsAgent : fallbackAgent;
+    return overrideAgent || newAgent || defaultAgent;
+  };
+
+  useEffect(() => {
+    if (!sessionsLoaded || didInit.current) return;
+    didInit.current = true;
+
+    if (sessions.length > 0) {
+      setActiveSession(sessions[0]);
+      return;
+    }
+
+    const autoMode = STAGE_AUTO_MODE[req.stage];
+    if (!autoMode) return;
+
+    const agent = resolveAgent();
+    const title = `${req.id} ${req.title}`;
+    createSession.mutate(
+      { reqId: req.id, title, agent },
+      {
+        onSuccess: (s) => {
+          setActiveSession(s);
+          setSessionInitialMode(autoMode);
+        },
+      }
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionsLoaded]);
+
+  const handleCreate = () => {
+    const agent = resolveAgent();
+    const outputMode = newOutputMode;
     createSession.mutate(
       { reqId: req.id, title: newTitle || `Session ${sessions.length + 1}`, agent },
-      { onSuccess: (s) => { setActiveSession(s); setNewTitle(''); setNewAgent(''); } }
+      {
+        onSuccess: (s) => {
+          setActiveSession(s);
+          setNewTitle('');
+          setNewAgent('');
+          setNewOutputMode('chat');
+          setShowNewPanel(false);
+          setSessionInitialMode(outputMode !== 'chat' ? outputMode : undefined);
+        },
+      }
+    );
+  };
+
+  const handleEmptySend = (prompt: string) => {
+    if (!prompt.trim()) return;
+    const agent = resolveAgent();
+    createSession.mutate(
+      { reqId: req.id, title: newTitle || `Session ${sessions.length + 1}`, agent },
+      { onSuccess: (s) => { setActiveSession(s); setNewTitle(''); setNewAgent(''); setShowNewPanel(false); setAutoPrompt(prompt.trim()); } }
     );
   };
 
   void onClose;
 
-  const showAnalysisTab = req.stage === 'analyzing' || req.stage === 'backlog';
-  const showTasksTab = req.stage === 'development' || req.stage === 'uat' || req.stage === 'prerelease' || req.stage === 'released' || req.stage === 'analyzing';
-
-  const tabStyle = (active: boolean): React.CSSProperties => ({
-    padding: '6px 14px',
-    fontSize: 12,
-    fontWeight: active ? 700 : 400,
-    color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
-    background: 'transparent',
-    border: 'none',
-    borderBottom: active ? '2px solid var(--accent-blue)' : '2px solid transparent',
-    cursor: 'pointer',
-    whiteSpace: 'nowrap',
-  });
+  const panelTitle = rightPanel === 'spec' ? '需求 Spec' : rightPanel === 'design' ? '设计 Spec' : rightPanel === 'tasks' ? '任务进度' : rightPanel === 'analysis' ? '分析方案' : '';
 
   return (
-    <div style={{ display: 'flex', height: '100%', background: 'var(--bg-primary)' }}>
+    <div style={{ display: 'flex', height: '100%', background: 'var(--bg-primary)', position: 'relative' }}>
       {/* Sidebar: sessions list */}
       <div style={{ width: 220, borderRight: '1px solid var(--border-default)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-default)' }}>
-          <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', marginBottom: 4 }}>
-            {req.title.slice(0, 20)}{req.title.length > 20 ? '…' : ''}
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', marginBottom: 2 }}>
+              {req.title.slice(0, 20)}{req.title.length > 20 ? '…' : ''}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Sessions</div>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Sessions</div>
+          <button
+            onClick={() => {
+              setNewTitle(`${req.id} ${req.title}`);
+              setShowNewPanel(true);
+            }}
+            title="新建会话"
+            style={{
+              width: 28, height: 28, borderRadius: '50%', border: '1px solid var(--border-default)',
+              background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            <Plus size={14} />
+          </button>
         </div>
-
-        <AttachmentsPanel reqId={req.id} />
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
           {sessions.map(s => (
             <SessionItem
               key={s.id}
               session={s}
-              active={activeSession?.id === s.id && tab === 'sessions'}
+              active={activeSession?.id === s.id}
               renaming={renamingId === s.id}
               renameValue={renameValue}
               onRenameValueChange={setRenameValue}
-              onClick={() => { if (renamingId !== s.id) { setActiveSession(s); setTab('sessions'); } }}
+              onClick={() => { if (renamingId !== s.id) { setActiveSession(s); } }}
               onStartRename={() => { setRenamingId(s.id); setRenameValue(s.title || s.agent); }}
               onConfirmRename={() => {
                 const title = renameValue.trim();
@@ -655,77 +1048,165 @@ export function ChatWorkspace({ req, onClose }: { req: Requirement; onClose: () 
             />
           ))}
         </div>
-
-        {/* New session */}
-        <div style={{ padding: 8, borderTop: '1px solid var(--border-default)' }}>
-          <input
-            value={newTitle}
-            onChange={e => setNewTitle(e.target.value)}
-            placeholder="新建会话..."
-            style={{ width: '100%', padding: '6px 8px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 12, marginBottom: 6, boxSizing: 'border-box' }}
-          />
-          {availableAgents.length > 0 && (
-            <UiSelect
-              value={newAgent}
-              onChange={setNewAgent}
-              options={[
-                { value: '', label: `自动选择 (${availableAgents.includes('claude-api') ? 'claude-api' : availableAgents[0]})` },
-                ...availableAgents.map(a => ({
-                  value: a,
-                  label: `${a} ${a === 'claude-api' ? '(流式)' : a === 'claude-code' ? '(非流式)' : ''}`,
-                })),
-              ]}
-              style={{ marginBottom: 6 }}
-            />
-          )}
-          <button
-            onClick={handleCreate}
-            style={{ width: '100%', padding: '6px', background: 'var(--accent-blue)', border: 'none', borderRadius: 4, color: 'var(--text-inverse)', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
-          >
-            <Plus size={12} style={{ display: 'inline', marginRight: 2 }} />新建会话
-          </button>
-        </div>
       </div>
 
       {/* Main area */}
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {/* Tab bar */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-default)', flexShrink: 0, paddingLeft: 8 }}>
-          <button style={tabStyle(tab === 'sessions')} onClick={() => setTab('sessions')}>会话</button>
-          <button style={tabStyle(tab === 'spec')} onClick={() => setTab('spec')}>需求 Spec</button>
-          <button style={tabStyle(tab === 'design')} onClick={() => setTab('design')}>设计 Spec</button>
-          {showAnalysisTab && (
-            <button style={tabStyle(tab === 'analysis')} onClick={() => setTab('analysis')}>分析方案</button>
-          )}
-          {showTasksTab && (
-            <button style={tabStyle(tab === 'tasks')} onClick={() => setTab('tasks')}>任务进度</button>
-          )}
-        </div>
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        {activeSession ? (
+          <ChatPanel
+            session={activeSession}
+            reqId={req.id}
+            req={req}
+            onClose={() => { setActiveSession(null); setSessionInitialMode(undefined); }}
+            onOpenPanel={setRightPanel}
+            autoPrompt={autoPrompt ?? undefined}
+            onAutoPromptConsumed={() => setAutoPrompt(null)}
+            initialMode={sessionInitialMode}
+          />
+        ) : (
+          <EmptyGuide req={req} onSend={handleEmptySend} />
+        )}
 
-        {/* Tab content */}
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          {tab === 'sessions' && (
-            activeSession ? (
-              <ChatPanel session={activeSession} reqId={req.id} onClose={() => setActiveSession(null)} />
-            ) : (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-tertiary)' }}>
-                选择或创建会话开始对话
+        {/* New session right-side panel */}
+        {showNewPanel && (
+          <>
+            <div
+              onClick={() => setShowNewPanel(false)}
+              style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 40 }}
+            />
+            <div style={{
+              position: 'absolute', right: 0, top: 0, bottom: 0, width: 360,
+              background: 'var(--bg-secondary)', borderLeft: '1px solid var(--border-default)',
+              boxShadow: 'var(--shadow-lg)', zIndex: 50, display: 'flex', flexDirection: 'column',
+            }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+                <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>新建会话</span>
+                <button onClick={() => setShowNewPanel(false)} style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                  <X size={16} />
+                </button>
               </div>
-            )
-          )}
-          {tab === 'spec' && (
-            <RequirementSpecEditor reqId={req.id} />
-          )}
-          {tab === 'design' && (
-            <DesignSpecEditor reqId={req.id} />
-          )}
-          {tab === 'analysis' && (
-            <AnalysisComparePanel reqId={req.id} onChosen={() => setTab('tasks')} />
-          )}
-          {tab === 'tasks' && (
-            <SubTaskPanel reqId={req.id} />
-          )}
-        </div>
+              <div style={{ flex: 1, overflow: 'auto', padding: '20px 18px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+                {/* Title */}
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>会话名称</label>
+                  <input
+                    autoFocus
+                    value={newTitle}
+                    onChange={e => setNewTitle(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }}
+                    placeholder={`Session ${sessions.length + 1}`}
+                    style={{
+                      width: '100%', padding: '8px 10px', background: 'var(--bg-tertiary)',
+                      border: '1px solid var(--border-default)', borderRadius: 6,
+                      color: 'var(--text-primary)', fontSize: 13, outline: 'none', boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                {/* Agent */}
+                {availableAgents.length > 0 && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>Agent</label>
+                    <UiSelect
+                      value={newAgent}
+                      onChange={setNewAgent}
+                      options={[
+                        { value: '', label: `自动选择 (${availableAgents.includes('claude-api') ? 'claude-api' : availableAgents[0]})` },
+                        ...availableAgents.map(a => ({
+                          value: a,
+                          label: `${a}${a === 'claude-api' ? ' (流式)' : a === 'claude-code' ? ' (非流式)' : ''}`,
+                        })),
+                      ]}
+                    />
+                  </div>
+                )}
+
+                {/* Work mode */}
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                    <label style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>工作模式</label>
+                    <WorkModeTooltip />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {OUTPUT_MODE_OPTIONS.map(opt => (
+                      <button
+                        key={opt.value}
+                        onClick={() => setNewOutputMode(opt.value)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '10px 12px', borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+                          border: `1px solid ${newOutputMode === opt.value ? 'var(--accent-blue)' : 'var(--border-default)'}`,
+                          background: newOutputMode === opt.value ? 'var(--accent-blue-10)' : 'var(--bg-tertiary)',
+                          color: 'var(--text-primary)',
+                        }}
+                      >
+                        <div style={{
+                          width: 14, height: 14, borderRadius: '50%', flexShrink: 0,
+                          border: `2px solid ${newOutputMode === opt.value ? 'var(--accent-blue)' : 'var(--border-default)'}`,
+                          background: newOutputMode === opt.value ? 'var(--accent-blue)' : 'transparent',
+                        }} />
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 500 }}>{opt.label}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 }}>{opt.desc}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Attachments */}
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 8 }}>附件</label>
+                  <AttachmentsPanel reqId={req.id} embedded />
+                </div>
+              </div>
+              <div style={{ padding: '14px 18px', borderTop: '1px solid var(--border-default)', flexShrink: 0 }}>
+                <button
+                  onClick={handleCreate}
+                  disabled={createSession.isPending}
+                  style={{
+                    width: '100%', padding: '10px', background: 'var(--accent-blue)', border: 'none',
+                    borderRadius: 8, color: 'var(--text-inverse)', cursor: createSession.isPending ? 'not-allowed' : 'pointer',
+                    fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}
+                >
+                  <Plus size={14} />新建会话
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Overlay panel */}
+        {rightPanel && (
+          <>
+            <div
+              onClick={() => setRightPanel(null)}
+              style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 40 }}
+            />
+            <div style={{
+              position: 'absolute', right: 0, top: 0, bottom: 0, width: 520,
+              background: 'var(--bg-secondary)', borderLeft: '1px solid var(--border-default)',
+              boxShadow: 'var(--shadow-lg)', zIndex: 50, display: 'flex', flexDirection: 'column',
+            }}>
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+                <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{panelTitle}</span>
+                <button
+                  onClick={() => setRightPanel(null)}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                {rightPanel === 'spec' && <RequirementSpecEditor reqId={req.id} />}
+                {rightPanel === 'design' && <DesignSpecEditor reqId={req.id} />}
+                {rightPanel === 'tasks' && <SubTaskPanel reqId={req.id} />}
+                {rightPanel === 'analysis' && <AnalysisComparePanel reqId={req.id} onChosen={() => setRightPanel('tasks')} />}
+              </div>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

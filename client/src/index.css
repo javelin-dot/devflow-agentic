@@ -70,22 +70,22 @@
 :root[data-theme="dark"] {
   --bg-primary: #0a0a0a;
   --bg-secondary: #161616;
-  --bg-tertiary: #121212;
-  --bg-sidebar: #0a0a0a;
-  --bg-hover: #1f1f1f;
+  --bg-tertiary: #1e1e1e;
+  --bg-sidebar: #0d0d0d;
+  --bg-hover: #242424;
   --bg-disabled: #2a2a2a;
-  --bg-drop: #141414;
+  --bg-drop: #1a1a1a;
   --diff-del-bg: #3a1515;
   --diff-add-bg: #0f3a15;
   --gate-pass-bg: #0f3d22;
   --gate-fail-bg: #3a0a0a;
 
-  --text-primary: #e8e8e8;
-  --text-secondary: #666666;
-  --text-tertiary: #444444;
+  --text-primary: #ebebeb;
+  --text-secondary: #d0d0d0;
+  --text-tertiary: #888888;
   --text-inverse: #ffffff;
 
-  --border-default: #1f1f1f;
+  --border-default: #2e2e2e;
   --border-active: rgba(0, 199, 199, 0.3);
   --border-focus: #00c7c7;
 
@@ -133,22 +133,22 @@
   :root:not([data-theme]) {
     --bg-primary: #0a0a0a;
     --bg-secondary: #161616;
-    --bg-tertiary: #121212;
-    --bg-sidebar: #0a0a0a;
-    --bg-hover: #1f1f1f;
+    --bg-tertiary: #1e1e1e;
+    --bg-sidebar: #0d0d0d;
+    --bg-hover: #242424;
     --bg-disabled: #2a2a2a;
-    --bg-drop: #141414;
+    --bg-drop: #1a1a1a;
     --diff-del-bg: #3a1515;
     --diff-add-bg: #0f3a15;
     --gate-pass-bg: #0f3d22;
     --gate-fail-bg: #3a0a0a;
 
-    --text-primary: #e8e8e8;
-    --text-secondary: #666666;
-    --text-tertiary: #444444;
+    --text-primary: #ebebeb;
+    --text-secondary: #d0d0d0;
+    --text-tertiary: #888888;
     --text-inverse: #ffffff;
 
-    --border-default: #1f1f1f;
+    --border-default: #2e2e2e;
     --border-active: rgba(0, 199, 199, 0.3);
     --border-focus: #00c7c7;
 
@@ -226,4 +226,19 @@ body {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* Dark mode: all interactive elements default to near-white text */
+:root[data-theme="dark"] button,
+:root[data-theme="dark"] a,
+:root[data-theme="dark"] [role="button"] {
+  color: var(--text-primary);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) button,
+  :root:not([data-theme]) a,
+  :root:not([data-theme]) [role="button"] {
+    color: var(--text-primary);
+  }
 }

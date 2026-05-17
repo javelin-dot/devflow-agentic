@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Check, X, Plus } from 'lucide-react';
+import { Check, X, Plus, Sun, Moon, Monitor, FolderOpen, GitBranch, Trash2, RefreshCw } from 'lucide-react';
 import { UiSelect } from '../components/ui';
 import {
   useSettings, useUpdateSettings, useAgentAvailability, useTestConnection,
   useUsers, useCreateUser, useUpdateUser, useDeleteUser, useMe,
+  useProjects, useScanProjects, useDeleteProject,
 } from '../api/hooks';
 import type { AIProvider } from '@devflow/shared';
+import { useTheme } from '../hooks/useTheme';
+import { DirPickerModal } from '../components/DirPickerModal';
 
 interface ApiUser {
   id: string;
@@ -373,6 +376,172 @@ function UserManagement() {
   );
 }
 
+// ─── sub-component: ReposTab ─────────────────────────────────────────────────
+
+function ReposTab() {
+  const { data: settings } = useSettings();
+  const updateSettings = useUpdateSettings();
+  const { data: projects = [] } = useProjects();
+  const scanProjects = useScanProjects();
+  const deleteProject = useDeleteProject();
+  const [scanDirs, setScanDirs] = useState<string[]>([]);
+  const [newDir, setNewDir] = useState('');
+  const [scanResult, setScanResult] = useState<string | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
+
+  useEffect(() => {
+    if (!settings) return;
+    try {
+      const parsed = settings.scanDirs ? JSON.parse(settings.scanDirs) : [];
+      setScanDirs(parsed);
+    } catch { /* */ }
+  }, [settings]);
+
+  function saveDirs(next: string[]) {
+    setScanDirs(next);
+    updateSettings.mutate({ scanDirs: JSON.stringify(next) });
+  }
+
+  function addDir(path?: string) {
+    const trimmed = (path ?? newDir).trim();
+    if (!trimmed || scanDirs.includes(trimmed)) return;
+    saveDirs([...scanDirs, trimmed]);
+    setNewDir('');
+  }
+
+  function removeDir(dir: string) {
+    saveDirs(scanDirs.filter(d => d !== dir));
+  }
+
+  function handleAddClick() {
+    if (newDir.trim()) {
+      addDir();
+    } else {
+      setShowPicker(true);
+    }
+  }
+
+  async function handleScan() {
+    if (scanDirs.length === 0) return;
+    setScanResult(null);
+    scanProjects.mutate(
+      { root: scanDirs },
+      {
+        onSuccess: (r) => setScanResult(`扫描完成，共发现 ${r.scanned} 个仓库`),
+        onError: (e) => setScanResult(`扫描失败: ${e.message}`),
+      }
+    );
+  }
+
+  return (
+    <div>
+      {showPicker && (
+        <DirPickerModal
+          onSelect={(path) => { addDir(path); setShowPicker(false); }}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
+
+      {/* Scan directories */}
+      <div style={card}>
+        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>扫描目录</div>
+        <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 12 }}>
+          添加目录后点击扫描，系统会递归查找所有 Git 仓库（含子目录）
+        </div>
+
+        {/* Directory list */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+          {scanDirs.length === 0 && (
+            <div style={{ fontSize: 13, color: 'var(--text-tertiary)', padding: '8px 0' }}>暂无目录，点击下方添加</div>
+          )}
+          {scanDirs.map(dir => (
+            <div key={dir} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: 'var(--bg-primary)', borderRadius: 6, border: '1px solid var(--border-default)' }}>
+              <FolderOpen size={14} color="var(--text-tertiary)" style={{ flexShrink: 0 }} />
+              <span style={{ flex: 1, fontSize: 13, color: 'var(--text-primary)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dir}</span>
+              <button onClick={() => removeDir(dir)} style={{ ...btnDanger, padding: '3px 8px', display: 'flex', alignItems: 'center' }}>
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Add dir input */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          <input
+            value={newDir}
+            onChange={e => setNewDir(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && addDir()}
+            placeholder="输入路径或点击添加浏览目录…"
+            style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }}
+          />
+          <button onClick={handleAddClick} style={btnSecondary}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Plus size={14} /> 添加</span>
+          </button>
+        </div>
+
+        {/* Scan button */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button
+            onClick={handleScan}
+            disabled={scanDirs.length === 0 || scanProjects.isPending}
+            style={{ ...btnPrimary, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <RefreshCw size={14} style={scanProjects.isPending ? { animation: 'spin 1s linear infinite' } : undefined} />
+            {scanProjects.isPending ? '扫描中…' : '扫描所有目录'}
+          </button>
+          {scanResult && (
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{scanResult}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Discovered repos */}
+      <div style={card}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>已发现仓库</div>
+          <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>{projects.length} 个</span>
+        </div>
+
+        {projects.length === 0 && (
+          <div style={{ fontSize: 13, color: 'var(--text-tertiary)', padding: '8px 0' }}>暂无仓库，请先添加目录并扫描</div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {projects.map(p => (
+            <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg-primary)', borderRadius: 6, border: '1px solid var(--border-default)' }}>
+              <GitBranch size={14} color="var(--accent-blue)" style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>{p.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {p.path}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                {p.branch && (
+                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-tertiary)', padding: '2px 6px', borderRadius: 4 }}>{p.branch}</span>
+                )}
+                {p.lang && (
+                  <span style={{ fontSize: 11, color: 'var(--accent-blue)', background: 'var(--accent-blue-10)', padding: '2px 6px', borderRadius: 4 }}>{p.lang}</span>
+                )}
+                <button
+                  onClick={() => deleteProject.mutate(p.name)}
+                  disabled={deleteProject.isPending}
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', padding: 4, borderRadius: 4 }}
+                  title="移除仓库"
+                  onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent-red)')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-tertiary)')}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── main component ───────────────────────────────────────────────────────────
 
 export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => void }) {
@@ -380,12 +549,13 @@ export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => v
   const { data: availData } = useAgentAvailability();
   const updateSettings = useUpdateSettings();
   const { data: me } = useMe();
+  const { mode, setMode } = useTheme();
 
   const [providers, setProviders] = useState<AIProvider[]>([]);
   const [proxyUrl, setProxyUrl] = useState('');
   const [proxySaved, setProxySaved] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [activeTab, setActiveTab] = useState<'ai' | 'users'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'repos' | 'users'>('ai');
 
   // On load: populate providers from settings, then auto-add detected claude-code if missing
   useEffect(() => {
@@ -470,6 +640,17 @@ export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => v
           }}
         >
           AI 与网络
+        </button>
+        <button
+          onClick={() => setActiveTab('repos')}
+          style={{
+            padding: '8px 16px', border: 'none', background: 'transparent',
+            color: activeTab === 'repos' ? 'var(--accent-blue)' : 'var(--text-tertiary)', cursor: 'pointer',
+            fontSize: 14, fontWeight: 600,
+            borderBottom: activeTab === 'repos' ? '2px solid var(--accent-blue)' : '2px solid transparent',
+          }}
+        >
+          代码仓库
         </button>
         <button
           onClick={() => setActiveTab('users')}
@@ -576,6 +757,44 @@ export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => v
             </div>
           </div>
 
+          {/* ── 外观 ── */}
+          <div style={card}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>外观</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              {([
+                { key: 'light' as const, label: '浅色', icon: <Sun size={16} /> },
+                { key: 'dark' as const, label: '深色', icon: <Moon size={16} /> },
+                { key: 'system' as const, label: '跟随系统', icon: <Monitor size={16} /> },
+              ]).map((t) => {
+                const active = mode === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setMode(t.key)}
+                    style={{
+                      flex: 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '14px 8px',
+                      borderRadius: 10,
+                      border: active ? '1px solid var(--accent-blue)' : '1px solid var(--border-default)',
+                      background: active ? 'var(--accent-blue-10)' : 'var(--bg-primary)',
+                      color: active ? 'var(--accent-blue)' : 'var(--text-secondary)',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    {t.icon}
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* ── 其他 ── */}
           <div style={card}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>其他</div>
@@ -585,6 +804,8 @@ export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => v
           </div>
         </>
       )}
+
+      {activeTab === 'repos' && <ReposTab />}
 
       {activeTab === 'users' && (
         <div style={card}>

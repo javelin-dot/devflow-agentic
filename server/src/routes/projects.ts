@@ -70,6 +70,15 @@ projectsRouter.post('/reorder', async (c) => {
   return c.json({ ok: true });
 });
 
+// DELETE /projects/:name
+projectsRouter.delete('/:name', (c) => {
+  const name = c.req.param('name');
+  const row = db.prepare('SELECT name FROM projects WHERE name = ?').get(name);
+  if (!row) return c.json({ error: 'not found' }, 404);
+  db.prepare('DELETE FROM projects WHERE name = ?').run(name);
+  return c.json({ ok: true });
+});
+
 // PATCH /projects/:name
 const PatchProjectSchema = z.object({
   lang: z.string().nullable().optional(),

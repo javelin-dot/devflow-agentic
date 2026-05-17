@@ -49,6 +49,14 @@ export function usePatchRequirement() {
   });
 }
 
+export function useArchiveRequirement() {
+  const qc = useQueryClient();
+  return useMutation<Requirement, Error, string>({
+    mutationFn: (id) => apiFetch<Requirement>(`/requirements/${id}/archive`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['requirements'] }),
+  });
+}
+
 // ===== M1 新增 hooks =====
 
 export function useProjects() {
@@ -71,6 +79,28 @@ export function usePatchProject() {
   return useMutation<Project, Error, { name: string; patch: Partial<Project> }>({
     mutationFn: ({ name, patch }) => apiFetch(`/projects/${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+}
+
+export function useDeleteProject() {
+  const qc = useQueryClient();
+  return useMutation<{ ok: boolean }, Error, string>({
+    mutationFn: (name) => apiFetch(`/projects/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
+  });
+}
+
+export interface FsLsResult {
+  path: string;
+  parent: string | null;
+  dirs: string[];
+}
+
+export function useFsLs(path: string | null) {
+  return useQuery<FsLsResult>({
+    queryKey: ['fs-ls', path],
+    queryFn: () => apiFetch<FsLsResult>(`/fs/ls${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+    staleTime: 5_000,
   });
 }
 
