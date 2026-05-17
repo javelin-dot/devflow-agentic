@@ -1,0 +1,157 @@
+---
+# 示例: 完整 RequirementSpec
+# 见 ../02-requirement-spec.md 字段说明
+spec_version: "1.0"
+title: "登录失败 3 次封禁 30 分钟"
+priority: high
+kind: standard
+
+projects:
+  - project: "backend-server"
+    devBranch: "feat/login-block"
+    uatBranch: "uat"
+    isPrimary: true
+
+planned_release_date: 2026-05-30
+tags: ["安全", "登录"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "同一 IP 连续 3 次密码错误后，第 4 次请求返回 423 Locked"
+    type: behavior
+    measurable: true
+  - id: AC-2
+    text: "封禁记录写入 audit_login_block 表，blocked_until 为 now+30min"
+    type: data
+    measurable: true
+  - id: AC-3
+    text: "封禁 30 分钟后自动解禁，再次输入正确密码可登录"
+    type: behavior
+    measurable: true
+  - id: AC-4
+    text: "管理员可通过现有 /admin/unblock 接口提前解禁"
+    type: api
+    measurable: true
+  - id: AC-5
+    text: "性能：拦截器对正常请求延迟 < 10ms p99"
+    type: perf
+    measurable: false        # 在 prerelease 抽样测，不是每条都自动跑
+
+tasks:
+  - id: T1
+    title: "新建 audit_login_block 表与 Repository"
+    project: "backend-server"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-2]
+    verify_commands:
+      - "cd <projectPath> && <run-unit-test LoginBlockRepoTest>"
+    risk: low
+
+  - id: T2
+    title: "登录拦截器接入封禁逻辑（含缓存命中黑名单）"
+    project: "backend-server"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-1, AC-3]
+    verify_commands:
+      - "cd <projectPath> && <run-unit-test LoginInterceptorTest>"
+      - "cd <projectPath> && <run-integration-test LoginBlockIT>"
+    risk: medium
+
+  - id: T3
+    title: "对接 /admin/unblock 现有接口（清缓存 + 更新 DB）"
+    project: "backend-server"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-4]
+    verify_commands:
+      - "cd <projectPath> && <run-unit-test UnblockAdminControllerTest>"
+    risk: low
+
+  - id: T4
+    title: "回归冒烟：HTTP 端到端验证三条 behavior AC"
+    project: "backend-server"
+    type: test
+    wave: 2
+    depends_on: [T2, T3]
+    acceptance: [AC-1, AC-3, AC-4]
+    verify_commands:
+      - "cd <projectPath>/tests/acceptance && bash run-login-block.sh"
+    risk: low
+
+contracts:
+  api:
+    - method: POST
+      path: /api/login
+      owner: backend-server
+      request:
+        body: { username: string, password: string }
+      response:
+        200: { token: string }
+        401: { reason: string }
+        423: { reason: "blocked", blocked_until: "ISO-8601" }
+      notes: "新增 423 响应；前端需展示倒计时"
+    - method: POST
+      path: /admin/unblock
+      owner: backend-server
+      request:
+        body: { ip: string }
+      response:
+        200: { ok: true }
+      notes: "现有接口；本次仅扩展 blocked_until 联动"
+  mq: []
+  data_model:
+    - table: audit_login_block
+      columns:
+        - { name: id, type: BIGINT, nullable: false, pk: true }
+        - { name: ip, type: "VARCHAR(45)", nullable: false }
+        - { name: blocked_until, type: TIMESTAMP, nullable: false }
+        - { name: reason, type: "VARCHAR(64)", nullable: true }
+        - { name: created_at, type: TIMESTAMP, nullable: false, default: "CURRENT_TIMESTAMP" }
+      indexes:
+        - { name: idx_ip_blocked, cols: [ip, blocked_until] }
+
+risks:
+  - "高并发下缓存与 DB 不一致 → 用 EXPIRE-after-write 30min 对齐 blocked_until"
+  - "IPv6 地址段处理（同 /64 视为同 IP 与否）→ v1 暂只匹配完整字符串"
+
+out_of_scope:
+  - "改密码强度策略"
+  - "改前端登录页布局"
+  - "RBAC / 权限模型"
+
+notes: |
+  此需求来源于安全审计 finding。
+  上线后由 ops 监控 audit_login_block 表行数，超过 1000/h 触发告警。
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# 业务背景
+
+近期被监控发现存在持续密码爆破尝试，每次约 10–50 req/min，
+目前登录服务无任何后端限流（仅前端 captcha，已被脚本绕过）。
+
+## 用户故事
+
+- 作为 **安全 / SRE**，我希望被识别为恶意的 IP 在系统层面被自动短期封禁，
+  以便不依赖前端 captcha 就能阻断大部分自动化爆破。
+- 作为 **合法用户**，如果我连续输错密码被误封，我希望 30 分钟后自动恢复，
+  或者通过工单让管理员立即解禁。
+
+## UI / 交互
+
+- 登录页：连续错误时显示"还剩 N 次机会"；触发 423 时显示倒计时。
+- 后台：`/admin/unblock` 复用现有页面，不新建。
+
+## 监控
+
+- 新增 metric: `auth_login_blocked_total{ip,reason}`
+- 现有 "API 4xx" 面板自动拾取 423。

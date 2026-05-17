@@ -1,0 +1,80 @@
+---
+# 示例: no_code 类需求（无项目，纯运维 / 配置变更）
+# 适用：调参、Jenkins 模板调整、配置发布、文档发布等不产生代码 diff 的工作
+spec_version: "1.0"
+title: "调高 nginx 限流阈值至 200 req/s"
+priority: medium
+kind: no_code
+
+# kind=no_code 时 projects 可省略或为空数组
+projects: []
+
+planned_release_date: 2026-05-22
+tags: ["运维", "限流"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "nginx 配置文件中 limit_req_zone rate 由 100r/s 改为 200r/s"
+    type: data
+    measurable: true
+  - id: AC-2
+    text: "灰度 1 台后 reload，观察 5min 5xx 率不升高"
+    type: behavior
+    measurable: false        # 人工抽检
+  - id: AC-3
+    text: "全量 reload 后 ops_action 事件审计齐全"
+    type: behavior
+    measurable: true
+
+# no_code 类型 tasks 仍可写，但不强制 project；type 偏 ops/config
+tasks:
+  - id: T1
+    title: "改 nginx.conf 模板（IaC 仓库）"
+    type: config
+    wave: 0
+    depends_on: []
+    acceptance: [AC-1]
+    verify_commands:
+      - "grep -E 'limit_req_zone .* rate=200r/s' nginx.conf"
+    risk: low
+
+  - id: T2
+    title: "灰度发布 + 抽样观察"
+    type: ops
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-2]
+    risk: medium
+
+  - id: T3
+    title: "全量 reload + 审计事件落库"
+    type: ops
+    wave: 2
+    depends_on: [T2]
+    acceptance: [AC-3]
+    verify_commands:
+      - "curl -sf $BASE_URL/events/by-req/$REQ_ID?type=ops_action | jq -e '.|length>=2'"
+    risk: low
+
+risks:
+  - "限流放宽后上游服务可能被打满 → 灰度先行，金丝雀 1 节点"
+
+out_of_scope:
+  - "不调整 nginx upstream 选路策略"
+
+notes: "no_code 走 development → prerelease 直通通道（hotfix-like）"
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# 业务背景
+
+业务侧反馈高峰期被限流误伤；监控显示 100r/s 阈值在大促时段命中过多正常请求。
+本次仅做配置调整，不涉及代码改动。
+
+## 用户故事
+
+- 作为 **运维**，我希望以最小变更把限流阈值提升 100% 并保留可回滚路径。

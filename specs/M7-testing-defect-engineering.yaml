@@ -1,0 +1,287 @@
+---
+spec_version: "1.0"
+title: "DevFlow M7 Testing & Defect — 五类测试+AI用例+缺陷状态机+报告导出"
+priority: high
+kind: no_code
+
+planned_release_date: 2026-06-28
+tags: ["M7", "testing", "defects", "ai-generation", "test-report", "rbac-prep"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "TestType 枚举重构为 smoke|functional|performance|stress|penetration；test_cases.testType 旧值 unit/integration/e2e/acceptance/regression 一次性迁移为 functional 并保留 legacyType 字段"
+    type: data
+    measurable: true
+  - id: AC-2
+    text: "TestFrameworkAdapter 新增 k6(performance) / wrk(stress) / zap-cli(penetration) 适配器；CLI 缺失时 POST /api/test-runs 返回 424 + installHint，不进入 running"
+    type: api
+    measurable: true
+  - id: AC-3
+    text: "渗透测试目标 URL 必须落在 settings.security.penTestAllowList，否则 POST /api/test-runs 返回 403；空白名单时所有 penetration 用例直接拒绝"
+    type: security
+    measurable: true
+  - id: AC-4
+    text: "POST /api/test-cases/generate SSE 流，scope=smoke 输出 5–10 条 testType=smoke 用例；scope=full 时每条 acceptance 至少被 1 条用例覆盖；产物自动入对应 test_plans（不存在则建）"
+    type: api
+    measurable: true
+  - id: AC-5
+    text: "M6 documents 中 type=design_spec status 由非 approved 转 approved 时，自动 POST /api/test-cases/generate scope=smoke；触发记录写 events 表 actor=system"
+    type: api
+    measurable: true
+  - id: AC-6
+    text: "TestCase 编辑入 documents 体系（type=test_case）做版本化；DELETE 走软删（deletedAt），POST /api/documents/:id/restore 可恢复"
+    type: api
+    measurable: true
+  - id: AC-7
+    text: "DefectStatus 枚举改为 pending_confirm|to_fix|to_regress|closed|wont_fix；defect_status_history 表记录每次变更（actor/fromStatus/toStatus/note/createdAt）；非法转换 409；wont_fix 缺 wontFixReason 返回 400"
+    type: api
+    measurable: true
+  - id: AC-8
+    text: "POST /api/defects/:id/assign-agent 启动 chat session(kind=defect_fix)：Agent 先分类→无需改码则 PATCH 至 wont_fix，需改码则 checkout 原 devBranch→修复→verifyCommands+bootCheck→PATCH 至 to_regress→自动 smoke run；失败回滚分支至原 commit"
+    type: api
+    measurable: true
+  - id: AC-9
+    text: "POST /api/test-reports/generate { reqId, scope } 输出 Markdown 落 documents.type=test_report；包含执行汇总(按 testType 通过率)+失败明细+缺陷列表+性能 P95/P99+渗透漏洞；本地 1 个完整需求 <30s 完成"
+    type: api
+    measurable: true
+  - id: AC-10
+    text: "stage uat→prerelease 转换时若存在 status ∈ {pending_confirm,to_fix,to_regress} 的缺陷 → 403；gate_checks 新增 defect_clear 检查项并落库"
+    type: api
+    measurable: true
+  - id: AC-11
+    text: "GET /api/documents/:id/export?format=pdf|docx 用 puppeteer 渲染 Markdown→PDF，markdown-docx 渲染 DOCX；文件名 {reqId}-{type}-v{version}.{ext}；PDF 中文与 Mermaid 可见"
+    type: api
+    measurable: true
+  - id: AC-12
+    text: "前端 TestDashboard 增强：顶部冒烟卡片(总数/通过率/最近运行)、5 类 testType tab 切换、performance/stress/penetration 用例编辑器含 type-specific 配置（QPS/并发曲线/扫描工具）"
+    type: ui
+    measurable: false
+  - id: AC-13
+    text: "前端 DefectListPanel：用时间线渲染 defect_status_history；新增 [指派 Agent 修复] 按钮 + 状态机操作面板（按当前状态枚举可达态）；列表过滤含 wontFixReason"
+    type: ui
+    measurable: false
+  - id: AC-14
+    text: "前端文档关联图视图（DocumentLinkGraph）：D3 force layout 渲染 documents+links，节点颜色按 type 区分，删除上游文档时下游显示红标"
+    type: ui
+    measurable: false
+  - id: AC-15
+    text: "前端 DocumentEditor 右上区新增 [导出 PDF] [导出 DOCX] 按钮，下载文件名与 AC-11 一致"
+    type: ui
+    measurable: false
+
+tasks:
+  # ===== wave 0: 数据迁移 =====
+  - id: T1
+    title: "server: bootstrap - test_cases testType 迁移 + legacyType 字段 + defects 状态枚举迁移 + defect_status_history 表 + settings.security.penTestAllowList 默认值"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-1, AC-7]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+      - "node -e \"const db=require('better-sqlite3')('server/data/devflow.db'); const r=db.prepare('SELECT name FROM sqlite_master WHERE type=\\\"table\\\" AND name=?').get('defect_status_history'); if(!r) throw new Error('missing defect_status_history'); const c=db.prepare('PRAGMA table_info(test_cases)').all(); if(!c.find(x=>x.name==='legacyType')) throw new Error('missing legacyType'); console.log('migrate ok')\""
+    risk: medium
+
+  # ===== wave 1: 后端 API =====
+  - id: T2
+    title: "server: TestFrameworkAdapter 重构 - 5 类适配器(vitest|jest|pytest|go-test|k6|wrk|zap-cli) + CLI 探测 + installHint + 渗透白名单校验"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-2, AC-3]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+      - "node -e \"const {detectAdapter}=require('./server/dist/services/testFrameworkAdapter.js'); const a=detectAdapter({testType:'performance',command:'k6 run x.js',cwd:'/tmp'}); if(!a||a.id!=='k6') throw new Error('k6 adapter missing'); console.log('ok')\" || echo 'build pending'"
+    risk: medium
+
+  - id: T3
+    title: "server: POST /api/test-cases/generate SSE - prompt 注入需求 Spec+设计 Spec+子任务+附件，输出 TestCase[] 入 test_plans/test_cases"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-4]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T4
+    title: "server: 缺陷状态机 - PATCH /api/defects/:id/status 校验合法转换 + 落 defect_status_history + 发 defect.status_changed 通知"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-7]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+      - "curl -s -o /dev/null -w '%{http_code}' -X PATCH http://localhost:4000/api/defects/nonexistent/status -H 'Content-Type: application/json' -d '{\"status\":\"closed\"}' | grep -qE '^(404|409)$' && echo ok"
+    risk: medium
+
+  - id: T5
+    title: "server: TestCase 编辑入 documents 体系 - 接 RG-01 documents API，TestCase CRUD 内部转 document 操作"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-6]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  # ===== wave 2: 编排 + 报告 + 集成 =====
+  - id: T6
+    title: "server: DefectFixOrchestrator - POST /api/defects/:id/assign-agent 拉 chat session → 分类 → 修复或 wont_fix → 自动回归 → 失败回滚 git reset"
+    type: impl
+    wave: 2
+    depends_on: [T2, T4]
+    acceptance: [AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T7
+    title: "server: POST /api/test-reports/generate - 聚合 test_runs+defects+performance metrics+penetration findings → Markdown 落 documents.type=test_report"
+    type: impl
+    wave: 2
+    depends_on: [T4]
+    acceptance: [AC-9]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T8
+    title: "server: QualityGate 增加 defect_clear 检查项 + stage uat→prerelease 转换拦截器"
+    type: impl
+    wave: 2
+    depends_on: [T4]
+    acceptance: [AC-10]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  - id: T9
+    title: "server: 文档导出 - GET /api/documents/:id/export?format=pdf|docx 接入 puppeteer + markdown-docx，缓存到 server/data/exports/"
+    type: impl
+    wave: 2
+    depends_on: [T7]
+    acceptance: [AC-11]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T10
+    title: "server: M6 集成钩子 - documents.type=design_spec status→approved 时自动触发 POST /api/test-cases/generate scope=smoke"
+    type: impl
+    wave: 2
+    depends_on: [T3]
+    acceptance: [AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  # ===== wave 3: 前端 =====
+  - id: T11
+    title: "client: TestDashboard 增强 - 冒烟卡片 + 5 类 testType tab + performance/stress/penetration 用例 type-specific 配置编辑器"
+    type: impl
+    wave: 3
+    depends_on: [T2, T3]
+    acceptance: [AC-12]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T12
+    title: "client: DefectListPanel 时间线 + 状态机操作面板 + 指派 Agent 按钮 + wontFixReason 过滤"
+    type: impl
+    wave: 3
+    depends_on: [T4, T6]
+    acceptance: [AC-13]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T13
+    title: "client: DocumentLinkGraph - D3 force layout 渲染 documents/document_links；上游删除标红"
+    type: impl
+    wave: 3
+    depends_on: [T1]
+    acceptance: [AC-14]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T14
+    title: "client: DocumentEditor 增加 [导出 PDF] [导出 DOCX] 按钮 + 调用 GET /api/documents/:id/export"
+    type: impl
+    wave: 3
+    depends_on: [T9]
+    acceptance: [AC-15]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+risks:
+  - "k6/wrk/zap-cli 是外部 CLI 二进制，需在 settings.testing.frameworks 配置路径 → adapter 缺失时给出 brew/apt 安装指引而非崩溃"
+  - "渗透测试白名单是关键安全控制 → 默认空（拒绝所有 penetration），用户必须显式加入；写日志到 events 表便于审计"
+  - "puppeteer 二进制 ~150MB → 首次运行下载 Chromium，提示用户；CI 环境可设 PUPPETEER_SKIP_DOWNLOAD=1 + 外部 chrome"
+  - "DefectFixOrchestrator 涉及 git checkout/reset → 失败时必须回滚到原 commit (git reflog 拿原 SHA)，避免污染分支"
+  - "test_cases 迁移至 documents 体系需 dual-write 过渡期：M7 内 test_cases 表仍保留，但 source-of-truth 是 documents；M8 完成后再清理 test_cases 表"
+
+out_of_scope:
+  - "R4-04 冒烟用例独立看板（合并入 TestDashboard 冒烟卡片，AC-12 已覆盖）"
+  - "性能测试结果可视化图表（mermaid xychart-beta，留 M8 收尾）"
+  - "用户/角色权限系统 - 移到 M8 / RG-06"
+  - "测试用例自动归档"
+
+notes: |
+  M7 围绕"测试 + 缺陷"两条线把开发环境工程化：
+  1. 测试类型对齐产品口径（smoke/functional/performance/stress/penetration），适配器接外部 CLI；
+  2. AI 用例生成自动消费 M6 的需求/设计 Spec，DesignSpec approved 即触发 smoke；
+  3. 缺陷状态机重构为业务语义（待确认/待修复/待回归/已关闭/不处理），开发 Agent 接手自动修复闭环；
+  4. 测试报告聚合 + PDF/DOCX 导出，发布前的证据链完整。
+
+  关键依赖：
+  - 强依赖 M6 documents/notifications 抽象（T5/T7/T9/T10 都直接用）；
+  - 强依赖 M6 attachments（AI 生成用例 prompt 注入 PRD 图）。
+  - 软依赖 M8 RBAC（缺陷状态变更/文档审批 P1 加权限，M8 完成后回填）。
+
+  执行顺序（按 wave）：
+  - wave 0：T1 单 migration（迁移 + 索引）
+  - wave 1：T2/T3/T4/T5 四并行（独立后端能力）
+  - wave 2：T6(编排)/T7(报告)/T8(门禁)/T9(导出)/T10(钩子) 五并行
+  - wave 3：T11/T12/T13/T14 四前端并行
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# M7 Testing & Defect Engineering 业务背景
+
+## 1. 为什么是 M6 之后
+
+M6 完成后"需求 Spec → 设计 Spec"两文档闭环已就绪，但下游缺陷与测试这条线依然停留在 M2.5 的骨架状态：
+- 测试类型与产品口径（冒烟/功能/性能/压力/渗透）不一致；
+- 缺陷状态机用通用 open/in_progress/resolved/closed，无法表达"待回归"和"不处理（原因）"；
+- 测试报告没有聚合产物，发布评审无证据可看。
+
+M7 集中补齐这三块，让"开发 → 测试 → 缺陷修复 → 报告"形成可循环的工程化通路。
+
+## 2. 用户故事
+
+**QA**：开发设计 Spec 一确认 → 系统自动给我 5–10 条冒烟用例草稿 → 我审改后跑通 → 失败的自动建缺陷草稿。
+**开发**：QA 标红的缺陷点「指派 Agent 修复」→ Agent 自己找分支、改代码、跑验证、回归 → 我只看时间线确认。
+**产品/项目**：发布评审前下载一份 PDF 报告 → 通过率/失败明细/缺陷清单/性能指标/渗透漏洞 一目了然。
+
+## 3. UI / 交互
+
+- **TestDashboard** 顶部 banner 显示冒烟用例总数 / 通过率 / 最近运行；
+- 用例列表按 5 类 `testType` Tab 切换；性能/压力/渗透各自有 type-specific 配置面板；
+- **DefectListPanel** 每条缺陷展开时间线，按当前状态显示可达态按钮（如 pending_confirm 显示 [确认修复] [不处理(填原因)]）；
+- 缺陷详情右上 [指派 Agent 修复] 按钮触发 DefectFixOrchestrator；
+- 需求详情新增 **关联图** Tab：documents + document_links 的 D3 force layout，孤立或上游删除节点标红；
+- **DocumentEditor** 右上区永远显示 [导出 MD] [导出 PDF] [导出 DOCX] 三按钮。
+
+## 4. 非目标
+
+- 不引入用户/角色（M8）；缺陷状态变更与文档审批本里程碑仍是 local-admin，但已埋点等 RBAC。
+- 不实现性能/压力的图形化趋势（留 M8 收尾）。
+- 不引入 LLM 直接执行渗透扫描 —— 仅作 zap-cli/sqlmap 触发器，结果由用户审阅。

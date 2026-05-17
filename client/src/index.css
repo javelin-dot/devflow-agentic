@@ -1,0 +1,229 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Light theme (default) ── */
+:root {
+  --bg-primary: #f5f5f7;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #f0f0f2;
+  --bg-sidebar: #fafafa;
+  --bg-hover: #f0f0f2;
+  --bg-disabled: #e8e8eb;
+  --bg-drop: #eef0f5;
+  --diff-del-bg: #fff0f0;
+  --diff-add-bg: #f0fff0;
+  --gate-pass-bg: #e8f5e9;
+  --gate-fail-bg: #ffebee;
+
+  --text-primary: #1a1a1a;
+  --text-secondary: #666666;
+  --text-tertiary: #999999;
+  --text-inverse: #ffffff;
+
+  --border-default: #eaeaea;
+  --border-active: rgba(0, 168, 168, 0.3);
+  --border-focus: #00a8a8;
+
+  --accent-blue: #00a8a8;
+  --accent-green: #34c759;
+  --accent-orange: #ff9500;
+  --accent-red: #ff3b30;
+  --accent-purple: #7c3aed;
+  --accent-coral: #ff6b6b;
+  --accent-cyan: #00c7c7;
+
+  --syntax-comment: #008000;
+  --syntax-string: #a31515;
+  --syntax-keyword: #005cc5;
+  --syntax-number: #098658;
+  --scan-success-bg: #e8f5e9;
+  --bg-code: #f5f5f5;
+  --answer-bg: #f0fafa;
+  --accent-red-light: #ff6b6b;
+
+  --accent-blue-10: rgba(0, 168, 168, 0.06);
+  --accent-blue-15: rgba(0, 168, 168, 0.10);
+  --accent-blue-22: rgba(0, 168, 168, 0.14);
+  --accent-blue-44: rgba(0, 168, 168, 0.28);
+  --accent-blue-66: rgba(0, 168, 168, 0.40);
+  --accent-green-15: rgba(52, 199, 89, 0.10);
+  --accent-green-22: rgba(52, 199, 89, 0.14);
+  --accent-green-44: rgba(52, 199, 89, 0.28);
+  --accent-orange-10: rgba(255, 149, 0, 0.06);
+  --accent-orange-15: rgba(255, 149, 0, 0.10);
+  --accent-orange-22: rgba(255, 149, 0, 0.14);
+  --accent-orange-44: rgba(255, 149, 0, 0.28);
+  --accent-red-15: rgba(255, 59, 48, 0.10);
+  --accent-red-22: rgba(255, 59, 48, 0.14);
+  --accent-red-44: rgba(255, 59, 48, 0.28);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 12px 40px rgba(0, 0, 0, 0.06);
+  --focus-ring: 0 0 0 2px var(--accent-blue-44);
+}
+
+/* ── Dark theme (Jimeng / TikTok style) ── */
+:root[data-theme="dark"] {
+  --bg-primary: #0a0a0a;
+  --bg-secondary: #161616;
+  --bg-tertiary: #121212;
+  --bg-sidebar: #0a0a0a;
+  --bg-hover: #1f1f1f;
+  --bg-disabled: #2a2a2a;
+  --bg-drop: #141414;
+  --diff-del-bg: #3a1515;
+  --diff-add-bg: #0f3a15;
+  --gate-pass-bg: #0f3d22;
+  --gate-fail-bg: #3a0a0a;
+
+  --text-primary: #e8e8e8;
+  --text-secondary: #666666;
+  --text-tertiary: #444444;
+  --text-inverse: #ffffff;
+
+  --border-default: #1f1f1f;
+  --border-active: rgba(0, 199, 199, 0.3);
+  --border-focus: #00c7c7;
+
+  --accent-blue: #00c7c7;
+  --accent-green: #34c759;
+  --accent-orange: #ff9500;
+  --accent-red: #ff3b30;
+  --accent-purple: #8b5cf6;
+  --accent-coral: #ff6b6b;
+  --accent-cyan: #00c7c7;
+
+  --syntax-comment: #6a9955;
+  --syntax-string: #ce9178;
+  --syntax-keyword: #569cd6;
+  --syntax-number: #b5cea8;
+  --scan-success-bg: #1a3a1a;
+  --bg-code: #0d0d0d;
+  --answer-bg: #1a2a1a;
+  --accent-red-light: #ff6b6b;
+
+  --accent-blue-10: rgba(0, 199, 199, 0.06);
+  --accent-blue-15: rgba(0, 199, 199, 0.10);
+  --accent-blue-22: rgba(0, 199, 199, 0.14);
+  --accent-blue-44: rgba(0, 199, 199, 0.28);
+  --accent-blue-66: rgba(0, 199, 199, 0.40);
+  --accent-green-15: rgba(52, 199, 89, 0.10);
+  --accent-green-22: rgba(52, 199, 89, 0.14);
+  --accent-green-44: rgba(52, 199, 89, 0.28);
+  --accent-orange-10: rgba(255, 149, 0, 0.06);
+  --accent-orange-15: rgba(255, 149, 0, 0.10);
+  --accent-orange-22: rgba(255, 149, 0, 0.14);
+  --accent-orange-44: rgba(255, 149, 0, 0.28);
+  --accent-red-15: rgba(255, 59, 48, 0.10);
+  --accent-red-22: rgba(255, 59, 48, 0.14);
+  --accent-red-44: rgba(255, 59, 48, 0.28);
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+  --focus-ring: 0 0 0 2px var(--accent-blue-44);
+}
+
+/* Auto-detect system preference when not manually set */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #161616;
+    --bg-tertiary: #121212;
+    --bg-sidebar: #0a0a0a;
+    --bg-hover: #1f1f1f;
+    --bg-disabled: #2a2a2a;
+    --bg-drop: #141414;
+    --diff-del-bg: #3a1515;
+    --diff-add-bg: #0f3a15;
+    --gate-pass-bg: #0f3d22;
+    --gate-fail-bg: #3a0a0a;
+
+    --text-primary: #e8e8e8;
+    --text-secondary: #666666;
+    --text-tertiary: #444444;
+    --text-inverse: #ffffff;
+
+    --border-default: #1f1f1f;
+    --border-active: rgba(0, 199, 199, 0.3);
+    --border-focus: #00c7c7;
+
+    --accent-blue: #00c7c7;
+    --accent-green: #34c759;
+    --accent-orange: #ff9500;
+    --accent-red: #ff3b30;
+    --accent-purple: #8b5cf6;
+    --accent-coral: #ff6b6b;
+    --accent-cyan: #00c7c7;
+
+    --syntax-comment: #6a9955;
+    --syntax-string: #ce9178;
+    --syntax-keyword: #569cd6;
+    --syntax-number: #b5cea8;
+    --scan-success-bg: #1a3a1a;
+    --bg-code: #0d0d0d;
+    --answer-bg: #1a2a1a;
+    --accent-red-light: #ff6b6b;
+
+    --accent-blue-10: rgba(0, 199, 199, 0.06);
+    --accent-blue-15: rgba(0, 199, 199, 0.10);
+    --accent-blue-22: rgba(0, 199, 199, 0.14);
+    --accent-blue-44: rgba(0, 199, 199, 0.28);
+    --accent-blue-66: rgba(0, 199, 199, 0.40);
+    --accent-green-15: rgba(52, 199, 89, 0.10);
+    --accent-green-22: rgba(52, 199, 89, 0.14);
+    --accent-green-44: rgba(52, 199, 89, 0.28);
+    --accent-orange-10: rgba(255, 149, 0, 0.06);
+    --accent-orange-15: rgba(255, 149, 0, 0.10);
+    --accent-orange-22: rgba(255, 149, 0, 0.14);
+    --accent-orange-44: rgba(255, 149, 0, 0.28);
+    --accent-red-15: rgba(255, 59, 48, 0.10);
+    --accent-red-22: rgba(255, 59, 48, 0.14);
+    --accent-red-44: rgba(255, 59, 48, 0.28);
+
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
+    --focus-ring: 0 0 0 2px var(--accent-blue-44);
+  }
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 3px;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

@@ -1,0 +1,134 @@
+---
+# 示例: 多项目 + 跨项目 task 依赖
+# 场景：后端先发新接口，前端再消费；DB schema 由后端项目内迁移完成
+spec_version: "1.0"
+title: "用户头像支持上传至对象存储"
+priority: high
+kind: standard
+
+projects:
+  - project: "backend-server"
+    devBranch: "feat/avatar-upload-be"
+    uatBranch: "uat"
+    isPrimary: true
+  - project: "web-frontend"
+    devBranch: "feat/avatar-upload-fe"
+    uatBranch: "uat"
+    isPrimary: false
+
+planned_release_date: 2026-06-10
+tags: ["用户中心", "对象存储"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "POST /api/users/:id/avatar 接收 multipart/form-data，返回对象存储 URL"
+    type: api
+    measurable: true
+  - id: AC-2
+    text: "users 表 avatar_url 列扩到 VARCHAR(512)"
+    type: data
+    measurable: true
+  - id: AC-3
+    text: "前端 ProfilePage 上传后立即预览，刷新后仍可见"
+    type: ui
+    measurable: true
+  - id: AC-4
+    text: "上传 >5MB 文件返回 413"
+    type: api
+    measurable: true
+
+tasks:
+  # ============ 后端 wave 0：DB ============
+  - id: T1
+    title: "users.avatar_url 扩列至 VARCHAR(512)"
+    project: "backend-server"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-2]
+    verify_commands:
+      - "cd <projectPath> && ./mvnw -pl user-service test -Dtest=AvatarColumnMigrationTest"
+    risk: low
+
+  # ============ 后端 wave 1：接口 ============
+  - id: T2
+    title: "实现 POST /api/users/:id/avatar"
+    project: "backend-server"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-1, AC-4]
+    verify_commands:
+      - "cd <projectPath> && ./mvnw -pl user-service test -Dtest=AvatarUploadControllerTest"
+      - "cd <projectPath> && ./mvnw -pl user-service verify -Pintegration -Dtest=AvatarUploadIT"
+    risk: medium
+
+  # ============ 前端 wave 1：可与 T2 并行 ============
+  - id: T3
+    title: "前端 mock 后端接口完成 ProfilePage 上传 UI"
+    project: "web-frontend"
+    type: impl
+    wave: 1
+    depends_on: []
+    acceptance: [AC-3]
+    verify_commands:
+      - "cd <projectPath> && npm test -- --run ProfilePage"
+    risk: low
+
+  # ============ 跨项目 wave 2：联调 ============
+  - id: T4
+    title: "前端切真接口 + 联调（依赖 T2 上线 dev）"
+    project: "web-frontend"
+    type: impl
+    wave: 2
+    depends_on: [T2, T3]
+    acceptance: [AC-3]
+    verify_commands:
+      - "cd <projectPath> && npm run test:e2e -- --grep avatar"
+    risk: medium
+
+  # ============ wave 3：跨项目冒烟 ============
+  - id: T5
+    title: "端到端冒烟脚本"
+    project: "backend-server"
+    type: test
+    wave: 3
+    depends_on: [T2, T4]
+    acceptance: [AC-1, AC-3, AC-4]
+    verify_commands:
+      - "cd <projectPath>/tests/acceptance && bash run-avatar-e2e.sh"
+    risk: low
+
+contracts:
+  api:
+    - method: POST
+      path: /api/users/:id/avatar
+      owner: backend-server
+      request:
+        body: { multipart: true, field: file }
+      response:
+        200: { avatar_url: string }
+        413: { reason: "payload too large" }
+  mq: []
+  data_model:
+    - table: users
+      columns:
+        - { name: avatar_url, type: "VARCHAR(512)", nullable: true }
+
+risks:
+  - "对象存储签名 URL 过期策略与 CDN 缓存配合 → 用 1h TTL + 手动失效"
+
+out_of_scope:
+  - "头像裁剪 / 滤镜功能"
+
+notes: "前后端分离开发：T2 与 T3 并行，T4 阻塞等 T2 dev 联调环境就绪"
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# 业务背景
+
+当前头像存数据库 BLOB，扩展性差。改为对象存储 + URL 引用。

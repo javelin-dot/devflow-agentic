@@ -1,0 +1,63 @@
+---
+# 反例: 故意违反多条规则，预期被 validate-spec.mjs 拒绝
+# 用作 validator 的负样本回归。
+#
+# 预期错误（按规则号，共 10 条）:
+#   R1      spec_version 不在支持范围 (0.9)
+#   R2      priority 非法 (urgent)
+#   R3      kind=standard 但 projects 中无 isPrimary=true
+#   R5      task project 不在 projects[]
+#   R6      task 依赖不存在的 id (T_GHOST)
+#   R6      tasks DAG 含环（已访问 0/2）
+#   R7      task 引用不存在的 acceptance (AC-NEVER)
+#   R8      AC-2 measurable=true 但未被任何 task.verify_commands 覆盖
+#   SAFETY  task T1 verify_commands 含危险命令: rm -rf /
+#   SAFETY  task T2 verify_commands 含危险命令: git push --force origin main
+spec_version: "0.9"                  # R1
+title: "故意写错的 spec"
+priority: urgent                     # R2
+kind: standard
+
+projects:
+  - project: "backend-server"
+    devBranch: "feat/bad"
+    isPrimary: false                 # R3：没有 primary
+
+acceptance:
+  - id: AC-1
+    text: "拿到响应 200"
+    type: behavior
+    measurable: true
+  - id: AC-2
+    text: "审计事件齐全"
+    type: data
+    measurable: true                 # R8：未被覆盖
+
+tasks:
+  - id: T1
+    title: "实现接口"
+    project: "ghost-project"         # R5
+    type: impl
+    wave: 0
+    depends_on: [T2]                 # R6 环
+    acceptance: [AC-1, AC-NEVER]     # R7
+    verify_commands:
+      - "rm -rf /"                   # SAFETY
+    risk: low
+
+  - id: T2
+    title: "修接口"
+    project: "backend-server"
+    type: impl
+    wave: 1
+    depends_on: [T1, T_GHOST]        # R6 环 + 未知 id
+    acceptance: [AC-1]
+    verify_commands:
+      - "git push --force origin main"   # SAFETY
+    risk: high
+---
+
+# 反例文档（用于回归 validator）
+
+本文件**不是**正常需求，仅用于 `tools/validate-spec.mjs` 的负样本回归。
+预期 `validate-spec.mjs sample-invalid.yaml` 退出码 = 1，且至少打印上方注释列出的 8 类错误。

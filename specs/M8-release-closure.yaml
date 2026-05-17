@@ -1,0 +1,251 @@
+---
+spec_version: "1.0"
+title: "DevFlow M8 Release Closure — PR审核+生产验证+master回合+归档+RBAC"
+priority: high
+kind: no_code
+
+planned_release_date: 2026-07-12
+tags: ["M8", "release", "pr-review", "production-verify", "archive", "rbac", "auth"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "ReleaseState 扩展 waiting_pr_review|production_verifying|merged_back；release_runs 增加 prUrl/prStatus/releaseBranch/productionVerifyResult 字段（NULL 兼容历史行）"
+    type: data
+    measurable: true
+  - id: AC-2
+    text: "POST /api/release/start mode=release 链路：git checkout master→pull→checkout -b release/{reqId}-{YYYYMMDD}→依次 merge 各 devBranch→push→GitHubProvider.createPR；冲突走现有 ConflictResolutionView"
+    type: api
+    measurable: true
+  - id: AC-3
+    text: "PR 状态轮询 30s 一次：approved → state=triggering（进入 Jenkins）；closed(merged=false) → state=cancelled；changes_requested → state=paused-conflict 提示人工跟进"
+    type: api
+    measurable: true
+  - id: AC-4
+    text: "Jenkins 完成后进入 state=production_verifying；模式 manual: UI 按钮置 verdict=accepted；模式 auto: 调用 settings.release.healthCheckUrls 全 200 通过、任一失败 verdict=null 保持 prerelease"
+    type: api
+    measurable: true
+  - id: AC-5
+    text: "production_verifying 通过后自动 git checkout master→merge release/...→push origin master，state=merged_back；merge 冲突复用 ConflictResolutionView 并保持当前 release 实例"
+    type: api
+    measurable: true
+  - id: AC-6
+    text: "归档自动化 cron 任务（每日 03:00 跑）：stage=released 且 releasedAt 早于 now-settings.archive.afterDays（默认 7）的需求自动设 archivedAt；settings.archive.enabled=false 关闭"
+    type: api
+    measurable: true
+  - id: AC-7
+    text: "GET /api/requirements 默认参数 archived=false 自动追加 SQL 过滤；POST /api/requirements/:id/unarchive 需 role=admin，未授权 403；归档需求子任务/缺陷/报告仍可只读访问"
+    type: api
+    measurable: true
+  - id: AC-8
+    text: "users 表 + roles(admin|dev|qa|pm|viewer) + POST /api/auth/login(JWT 24h) + middleware：未携带 token 401；首次启动自动 seed local-admin 兼容单机模式"
+    type: api
+    measurable: true
+  - id: AC-9
+    text: "RBAC 锁定 4 个受控操作点：文档 approve/reject(pm|admin)、unarchive(admin)、release start(admin)、defects status PATCH(qa|dev|admin)；未授权返回 403 含缺失角色"
+    type: security
+    measurable: true
+  - id: AC-10
+    text: "前端 ReleaseView 增强：PR 链接卡片(状态+审核人) + Jenkins 触发表单(字段从 jenkins_templates.params 动态生成) + 生产验证按钮(manual)或健康检查实时状态(auto) + merged-back 时间线"
+    type: ui
+    measurable: false
+  - id: AC-11
+    text: "前端 ArchiveView 完善：默认按季度分组列表、workspace+priority+tag 筛选、详情只读、admin 角色显示 [恢复] 按钮"
+    type: ui
+    measurable: false
+  - id: AC-12
+    text: "前端 LoginView + SettingsView 用户管理：管理员可增删改用户与角色；非管理员仅能改自己密码；JWT 失效自动跳转登录页"
+    type: ui
+    measurable: false
+
+tasks:
+  # ===== wave 0: 数据迁移 =====
+  - id: T1
+    title: "server: bootstrap - release_runs 字段扩展(prUrl/prStatus/releaseBranch/productionVerifyResult) + users/roles 表 + settings 默认值(archive/healthCheckUrls/git.provider/git.token)"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-1, AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+      - "node -e \"const db=require('better-sqlite3')('server/data/devflow.db'); const r=db.prepare('SELECT name FROM sqlite_master WHERE type=\\\"table\\\" AND name=?').get('users'); if(!r) throw new Error('missing users'); const c=db.prepare('PRAGMA table_info(release_runs)').all(); if(!c.find(x=>x.name==='prUrl')) throw new Error('missing prUrl'); console.log('migrate ok')\""
+    risk: medium
+
+  # ===== wave 1: 后端 API =====
+  - id: T2
+    title: "server: GitHubProvider 适配器 - createPR/getPRStatus/getReviews/closePR；token 从 settings.git.token 读，401 时给出指引；预留 GitLabProvider/WebhookProvider 接口"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-2, AC-3]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T3
+    title: "server: ReleaseRunner 状态机扩展 - waiting_pr_review/production_verifying/merged_back 状态分支 + PR 30s 轮询 + 冲突复用 ConflictResolutionView 数据结构"
+    type: impl
+    wave: 1
+    depends_on: [T1, T2]
+    acceptance: [AC-1, AC-2, AC-3]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T4
+    title: "server: 生产验证模块 - settings.release.verifyMode=manual|auto；auto 模式 fetch healthCheckUrls 全部 200 才通过；超时 60s 视为失败"
+    type: impl
+    wave: 1
+    depends_on: [T3]
+    acceptance: [AC-4]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T5
+    title: "server: merge-back 实现 - 验证通过后 git checkout master→merge release/...→push；冲突暂停同样落 release_runs.conflictFiles"
+    type: impl
+    wave: 1
+    depends_on: [T3]
+    acceptance: [AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T6
+    title: "server: 归档 cron + GET /api/requirements 默认过滤 + POST /api/requirements/:id/unarchive 路由"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-6, AC-7]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+      - "curl -s 'http://localhost:4000/api/requirements?archived=false' -o /dev/null -w '%{http_code}\\n' | grep -q 200 && echo ok"
+    risk: low
+
+  - id: T7
+    title: "server: auth 路由 - POST /api/auth/login(bcrypt+JWT) / logout / me；middleware authGuard 注入 ctx.user；首次启动 seed local-admin(密码可改)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+      - "curl -s -o /dev/null -w '%{http_code}' http://localhost:4000/api/auth/me | grep -qE '^(200|401)$' && echo ok"
+    risk: medium
+
+  - id: T8
+    title: "server: RBAC 装饰 4 个受控点 - 文档 approve/reject、unarchive、release start、defects status PATCH；未授权 403 + { requiredRoles, currentRole }"
+    type: impl
+    wave: 1
+    depends_on: [T7]
+    acceptance: [AC-9]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  # ===== wave 2: 前端 =====
+  - id: T9
+    title: "client: ReleaseView 增强 - PR 状态卡片 + Jenkins 触发表单(动态字段) + 生产验证 manual/auto 区分 + merged-back 时间线"
+    type: impl
+    wave: 2
+    depends_on: [T3, T4, T5]
+    acceptance: [AC-10]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T10
+    title: "client: ArchiveView 完善 - 季度分组 + 筛选 + 只读详情 + admin 恢复按钮"
+    type: impl
+    wave: 2
+    depends_on: [T6]
+    acceptance: [AC-11]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T11
+    title: "client: LoginView + SettingsView 用户管理 + apiClient 注入 Authorization + 401 跳转登录"
+    type: impl
+    wave: 2
+    depends_on: [T7, T8]
+    acceptance: [AC-12]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+risks:
+  - "GitHub API 频次限制（5000/h Token） → PR 轮询单 Token 同时支撑 release 数受限，settings 可关闭轮询改 webhook"
+  - "merge-back 冲突时 release 实例长期 paused → UI 必须显眼提示，否则需求卡在 prerelease；增加 release_runs.lastActiveAt 监控字段"
+  - "首次启动 seed local-admin 默认密码必须强制改 → 登录后未改密则强制跳转修改密码页"
+  - "JWT 24h 期限对长会话不友好 → 暂用刷新策略：me 接口续期；后续考虑 refresh token"
+  - "归档 cron 在多实例部署下会重复执行 → settings.archive.lockFile + flock；单机部署不受影响"
+  - "RBAC 改动会影响所有调用现有 patch 的脚本/CI → 加 settings.security.rbacEnabled=false 兼容开关，单机部署默认关"
+
+out_of_scope:
+  - "GitLab/Bitbucket Provider（M9）"
+  - "PR 评审 Webhook 替代轮询（M9）"
+  - "多用户协同实时同步（M9，需要 WebSocket）"
+  - "细粒度操作日志查询前端（保留 ActivityView 现有能力）"
+  - "SSO/LDAP 集成（M9 评估）"
+
+notes: |
+  M8 是把"发布"这一段从半自动升到全自动闭环：PR 创建 → 审核 → Jenkins → 生产验证 → 合并回 master → 归档。
+  同时引入最小可用 RBAC 把 M6/M7 埋点的「pm/admin/qa/dev」角色真正生效。
+
+  关键交付：
+  1. ReleaseRunner 增加 3 个状态（waiting_pr_review / production_verifying / merged_back），与现有 paused-conflict 共存；
+  2. GitHubProvider 是首个 GitProvider 实现，预留 GitLab/Bitbucket/Webhook 接口；
+  3. 生产验证支持 manual 与 auto 双模式，auto 模式只需配 healthCheckUrls；
+  4. 归档自动化让看板长期保持 <100 卡片量级；
+  5. RBAC 提供 5 角色 × 4 受控点的最小可用版本；本里程碑后再扩展可控操作清单。
+
+  关键依赖：
+  - 强依赖 M7 缺陷状态机（uat→prerelease 拦截已就绪）；
+  - 强依赖 M6 documents.approve/reject（RBAC 的第一个挂点）；
+  - 与 M3 现有 ReleaseRunner + ConflictResolutionView 高度复用。
+
+  执行顺序（按 wave）：
+  - wave 0：T1 单 migration
+  - wave 1：T2(GitHub) → T3(RR 状态机) → T4/T5 并行；T6(归档) / T7(auth) / T8(RBAC) 与上述并行
+  - wave 2：T9/T10/T11 三前端并行
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# M8 Release Closure 业务背景
+
+## 1. 为什么是收尾里程碑
+
+M0–M5 把"看板 + Agent + 测试 + 发布 + 运维"的骨架打通，
+M6 补齐了文档抽象与 AI 生成需求/设计 Spec，
+M7 补齐了测试与缺陷的工程化闭环，
+但发布这一段仍止于"Jenkins 触发"，距离用户描述的「PR 审核 → 生产验证 → 合并回 master → 归档」完整闭环还有 4 步。
+
+M8 把这 4 步全部补齐，同时引入最小可用 RBAC，让 M6/M7 已埋点的角色控制真正生效。完成后 DevFlow 进入"v1.0 GA"状态。
+
+## 2. 用户故事
+
+**开发负责人**：选定需求点 [发起发布] → 系统自动建 release 分支 + 合并各 devBranch + 创建 PR → 我贴 PR 链接给评审人 → 评审通过后系统自动触发 Jenkins → 生产健康检查全绿 → 自动合并回 master → 需求自动归档。
+**管理员**：在 SettingsView 加用户、分配角色（pm/dev/qa）→ 普通用户进入系统只能看到自己权限内的操作按钮。
+**全员**：超过 30 天前发布的需求不再出现在主看板，但在「历史归档」里仍可只读检索。
+
+## 3. UI / 交互
+
+- **ReleaseView** 顶部时间线展示：preparing → merging → waiting_pr_review → triggering → production_verifying → merged_back，当前态高亮；
+- waiting_pr_review 时显示 PR 链接 + 审核人头像 + 状态 badge；
+- production_verifying 时 manual 模式给 [验证通过] [验证失败] 两按钮，auto 模式实时显示每个 healthCheckUrl 的状态点；
+- **ArchiveView** 默认季度分组（如 "2026 Q2"），可按 workspace/priority/tag 筛选，详情页所有字段只读，admin 角色显示 [恢复] 按钮；
+- **LoginView** 首次启动后跳转，提示 local-admin 默认密码并强制修改；
+- **SettingsView** 新增「用户管理」分页：admin 可增删改用户、分配角色；非 admin 仅显示自己的资料卡片。
+
+## 4. 非目标
+
+- 不支持 GitLab / Bitbucket（留 M9）；
+- 不引入 SSO/LDAP（留 M9 评估）；
+- 不实现细粒度操作权限（仅 5 角色 × 4 受控点）；
+- 不重构 release_runs 表（现有字段保留兼容）；
+- 不实现多实例分布式锁（cron 单机锁即可）。

@@ -1,0 +1,276 @@
+---
+spec_version: "1.0"
+title: "DevFlow M6 Document Lifecycle — 文档版本+AI需求/设计Spec+通知+附件"
+priority: high
+kind: no_code
+
+planned_release_date: 2026-06-07
+tags: ["M6", "documents", "ai-spec", "notifications", "attachments", "versioning"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "documents/document_versions/document_links 三张表 bootstrap 创建；PATCH /api/documents/:id 每次成功保存自动 currentVersion+=1 并落 document_versions 行"
+    type: api
+    measurable: true
+  - id: AC-2
+    text: "GET /api/documents/:id/diff?from=&to= 返回 unified diff（text/plain），1MB Markdown 输入 P95 < 500ms"
+    type: api
+    measurable: true
+  - id: AC-3
+    text: "POST /api/documents/:id/approve | /reject 改 status 至 approved/rejected；非法转换返回 409；rejected 必填 reason 否则 400"
+    type: api
+    measurable: true
+  - id: AC-4
+    text: "POST /api/requirements/:id/attachments multipart 上传，DB 写 attachments 表（id/reqId/filename/mime/size/sha256/createdAt），单文件 ≤25MB 否则 413；扩展名白名单过滤"
+    type: api
+    measurable: true
+  - id: AC-5
+    text: "GET /api/attachments/:id/raw 流式下载支持 Range 头；DELETE /api/attachments/:id 同时删除磁盘文件与 DB 行"
+    type: api
+    measurable: true
+  - id: AC-6
+    text: "POST /api/specs/requirement/generate SSE 流（thinking/entry/done），完成时落 documents.type=requirement_spec status=draft，contextRefs 含附件时 prompt 注入对应 URL"
+    type: api
+    measurable: true
+  - id: AC-7
+    text: "POST /api/specs/design/generate（或在 /api/analysis/start 选定时派生）SSE 流，产物 designSpec 含 businessFlow(mermaid)/apis[]/dataModels[]，落 documents.type=design_spec"
+    type: api
+    measurable: true
+  - id: AC-8
+    text: "notifications + notification_subscriptions 表创建；document.changed_after_approval / document.pending_approval / defect.status_changed / release.pr_review_required / subtask.error 五类事件可触发；GET /api/notifications 返回当前用户未读列表"
+    type: api
+    measurable: true
+  - id: AC-9
+    text: "Webhook 通道失败按指数退避重试 3 次（1s/4s/16s）；最终失败写 notifications.deliveryStatus=failed"
+    type: api
+    measurable: true
+  - id: AC-10
+    text: "前端 DocumentEditor 通用组件：左侧版本列表（含作者/时间/摘要），中间编辑器，右上 [保存为新版本][与上一版diff][导出MD] 三个按钮；切换版本可只读预览"
+    type: ui
+    measurable: false
+  - id: AC-11
+    text: "前端 RequirementSpecEditor 与 DesignSpecEditor 接入 DocumentEditor，RequirementSpec 提供大纲+表单+Markdown 混合，DesignSpec 提供 Mermaid 实时预览+API/表结构表格"
+    type: ui
+    measurable: false
+  - id: AC-12
+    text: "前端 AttachmentsPanel 在 ChatWorkspace 顶部：拖拽上传、图片缩略图、非图片显示 mime 图标+下载，删除有二次确认"
+    type: ui
+    measurable: false
+  - id: AC-13
+    text: "前端 NotificationBell 在 NavSidebar 右上角：红点 badge=未读数，下拉显示最近 20 条，点击单条标记已读并跳转目标文档/缺陷"
+    type: ui
+    measurable: false
+
+tasks:
+  # ===== wave 0: 数据层 =====
+  - id: T1
+    title: "server: bootstrap 增加 documents / document_versions / document_links 三张表 + 索引"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-1]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+      - "node -e \"const db=require('better-sqlite3')('server/data/devflow.db'); ['documents','document_versions','document_links'].forEach(t=>{const r=db.prepare('SELECT name FROM sqlite_master WHERE type=\\\"table\\\" AND name=?').get(t); if(!r) throw new Error('missing '+t)}); console.log('tables ok')\""
+    risk: low
+
+  - id: T2
+    title: "server: bootstrap 增加 attachments 表（替换 requirements.attachments JSON 字段）+ 数据迁移"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-4]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+      - "node -e \"const db=require('better-sqlite3')('server/data/devflow.db'); const r=db.prepare('SELECT name FROM sqlite_master WHERE type=\\\"table\\\" AND name=?').get('attachments'); if(!r) throw new Error('missing attachments'); console.log('ok')\""
+    risk: medium
+
+  - id: T3
+    title: "server: bootstrap 增加 notifications / notification_subscriptions 表 + 索引"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+      - "node -e \"const db=require('better-sqlite3')('server/data/devflow.db'); ['notifications','notification_subscriptions'].forEach(t=>{const r=db.prepare('SELECT name FROM sqlite_master WHERE type=\\\"table\\\" AND name=?').get(t); if(!r) throw new Error('missing '+t)}); console.log('ok')\""
+    risk: low
+
+  # ===== wave 1: 后端 API =====
+  - id: T4
+    title: "server: documents 路由 - CRUD + 版本化 PATCH + GET /versions + GET /diff + approve/reject"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-1, AC-2, AC-3]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+      - "curl -s -X POST http://localhost:4000/api/documents -H 'Content-Type: application/json' -d '{\"reqId\":\"r-test\",\"type\":\"requirement_spec\",\"title\":\"t\",\"content\":\"v1\"}' | grep -q '\"currentVersion\":1' && echo ok"
+    risk: medium
+
+  - id: T5
+    title: "server: attachments 路由 - 多文件 multipart 上传 + Range 流式下载 + DELETE"
+    type: impl
+    wave: 1
+    depends_on: [T2]
+    acceptance: [AC-4, AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T6
+    title: "server: notifications 路由 + NotificationDispatcher 服务（inapp/webhook/email 三通道 + 指数退避）"
+    type: impl
+    wave: 1
+    depends_on: [T3]
+    acceptance: [AC-8, AC-9]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  # ===== wave 2: AI 生成接口 =====
+  - id: T7
+    title: "server: POST /api/specs/requirement/generate SSE - 拼装需求+附件+关联需求 prompt → Agent → 落 documents"
+    type: impl
+    wave: 2
+    depends_on: [T4, T5]
+    acceptance: [AC-6]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T8
+    title: "server: 扩展 /api/analysis/start 产物 designSpec + 新增 POST /api/specs/design/generate 独立入口"
+    type: impl
+    wave: 2
+    depends_on: [T4]
+    acceptance: [AC-7]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T9
+    title: "server: 事件钩子 - documents approved 后再编辑 → 发 document.changed_after_approval；defect 状态变 → defect.status_changed；subtask error → subtask.error"
+    type: impl
+    wave: 2
+    depends_on: [T6, T4]
+    acceptance: [AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  # ===== wave 3: 前端 =====
+  - id: T10
+    title: "client: DocumentEditor 通用组件 + 版本列表 + diff 视图（unified-diff 渲染）"
+    type: impl
+    wave: 3
+    depends_on: [T4]
+    acceptance: [AC-10]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T11
+    title: "client: RequirementSpecEditor + DesignSpecEditor（Mermaid live preview）+ ChatWorkspace Tab 集成"
+    type: impl
+    wave: 3
+    depends_on: [T10, T7, T8]
+    acceptance: [AC-11]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T12
+    title: "client: AttachmentsPanel 拖拽上传 + 缩略图 + 删除 + ChatWorkspace 顶部集成"
+    type: impl
+    wave: 3
+    depends_on: [T5]
+    acceptance: [AC-12]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T13
+    title: "client: NotificationBell 铃铛组件 + 未读 badge + 下拉列表 + 标记已读 + 路由跳转"
+    type: impl
+    wave: 3
+    depends_on: [T6]
+    acceptance: [AC-13]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+risks:
+  - "documents 替换 requirements.api_doc / release_doc / contracts → 必须保留 bootstrap 迁移脚本，旧字段读取兼容到 M7 再清理"
+  - "AI 生成 RequirementSpec 大段 prompt 超过模型 context window → 附件正文截断到前 8k tokens，超过部分给 URL 让 Agent 自取"
+  - "Mermaid 流程图渲染依赖 mermaid.js → bundle size +200KB，DesignSpecEditor 改为动态 import 减少首屏成本"
+  - "Webhook 失败重试占用事件循环 → NotificationDispatcher 用独立 setTimeout 链 + 内存队列；进程重启会丢未投递队列（M9 改持久化）"
+  - "POST /api/restore 后内存中的 NotificationDispatcher 队列必须先 flush 再切换 DB"
+
+out_of_scope:
+  - "R1-05 需求 Spec 强审批拦截 stage 跃迁（留 M6.1 hot-patch）"
+  - "R2-03 设计变更反向触发子任务红标（需要 RG-04 关联图先到位，留 M7）"
+  - "RG-02 PDF/DOCX 导出（M7 接入 puppeteer）"
+  - "RG-04 文档关联图 D3 force layout（M7）"
+  - "RG-06 用户/角色权限系统（M8）"
+
+notes: |
+  M6 是 M7（测试/缺陷工程化）与 M8（发布闭环）的前置基石。
+  核心交付：documents 统一抽象 + 五类文档版本化 + AI 生成需求/设计 Spec + 通知 + 附件。
+  完成后"创建 → 分析"两阶段可端到端跑通 Spec-First 闭环。
+
+  执行顺序建议（按 wave）：
+  - wave 0 三张迁移并行（T1/T2/T3，无依赖）
+  - wave 1 路由层并行（T4/T5/T6）
+  - wave 2 AI 接口 + 事件钩子（T7/T8/T9）
+  - wave 3 前端四个组件并行（T10/T11/T12/T13）
+
+  关键设计决策：
+  1. documents 表统一替代散落在 requirements 表中的 api_doc/release_doc 字段，
+     新数据全部入新表；旧字段保留只读至 M7 一次性清理。
+  2. NotificationDispatcher 用内存队列 + setTimeout 链，避免引入额外依赖；
+     持久化在 M9 评估（届时若用户量 >10 则改 PG/Redis）。
+  3. Mermaid 流程图渲染前端动态 import；后端仅存字符串，不做渲染。
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# M6 Document Lifecycle 业务背景
+
+## 1. 为什么这是基石里程碑
+
+DevFlow 当前 M0–M5 已经把"看板 / Agent 执行 / 测试 / 发布 / 运维"五条线全部走通，
+但**用户描述的六阶段闭环**仍有结构性缺口：
+
+- 阶段 1「需求创建」缺附件 + AI 生成需求 Spec；
+- 阶段 2「需求分析」缺结构化的开发设计文档（业务流程图 / 接口 / 数据模型）；
+- 全局缺统一的「文档版本 + 通知」基础设施。
+
+M6 集中补齐这三块。完成后：
+- R4（测试用例 AI 生成）才有"已确认的设计 Spec"作为输入；
+- R5（缺陷自动处理）才有"通知"通道；
+- R6（发布闭环）才有"已批准的文档链路"做证据。
+
+## 2. 用户故事
+
+**产品经理**：上传 PRD 图 + 关联需求 → 一键 AI 生成需求 Spec → 在编辑器里改 → 点确认 → 进入分析阶段。
+**架构师**：从需求 Spec 派生设计 Spec → AI 输出业务流程图 + 接口列表 + 表结构 → 编辑确认 → 自动派生子任务。
+**全员**：已批准的文档被改动 → 5 秒内收到站内通知 + 可选 Webhook → 看到 diff → 重新评估下游。
+
+## 3. UI / 交互
+
+- 需求详情页顶部新增 **AttachmentsPanel**（拖拽 + 缩略图）。
+- 需求详情页新增两个 Tab：**「需求 Spec」**、**「设计 Spec」**，均使用 `DocumentEditor`。
+- NavSidebar 右上角新增 **NotificationBell**（红点 badge）。
+- 文档编辑器右上 `[保存为新版本] [与上一版 diff] [导出 MD]` 三按钮始终可见。
+
+## 4. 非目标
+
+- 不引入用户/角色（保留 local-admin 单用户模式，留 RG-06 / M8）。
+- 不实现 PDF / DOCX 导出（留 RG-02 / M7）。
+- 不实现文档关联图（留 RG-04 / M7）。
+- 不重构 defects 状态机（留 R5-01 / M7）。
+- 不实现 PR 审核 / master 回合（留 R6 / M8）。

@@ -1,0 +1,153 @@
+---
+spec_version: "1.0"
+title: "DevFlow M5 Polish & Productize — 安装向导+统计仪表板+归档+健康检查+备份"
+priority: high
+kind: no_code
+
+planned_release_date: 2026-10-31
+tags: ["M5", "onboarding", "dashboard", "archive", "health", "backup", "polish"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "GET /api/health 返回 { uptime, dbSizeKb, tableRowCounts, agentCount, version }，状态码始终 200"
+    type: api
+    measurable: true
+  - id: AC-2
+    text: "GET /api/backup 流式下载 SQLite 文件；POST /api/restore multipart 上传并热替换 DB 文件"
+    type: api
+    measurable: true
+  - id: AC-3
+    text: "GET /api/stats 返回 { byStage, weeklyThroughput, avgCycleDays, totalRequirements, openDefects }"
+    type: api
+    measurable: true
+  - id: AC-4
+    text: "POST /api/docs/release/:reqId 根据 events + release_runs 自动生成 Markdown 发布文档，写入 requirements.release_doc"
+    type: api
+    measurable: true
+  - id: AC-5
+    text: "前端 DashboardView：展示 AC-3 统计数据（阶段分布条形图+周吞吐+平均周期+缺陷计数），纯 CSS 无外部图表库"
+    type: ui
+    measurable: false
+  - id: AC-6
+    text: "前端 ArchiveView：归档需求列表，支持按关键字搜索，可恢复（PATCH archivedAt=null）"
+    type: ui
+    measurable: false
+  - id: AC-7
+    text: "前端 OnboardingWizard：首次启动时显示 5 步向导（系统检测→项目扫描→AI配置→完成），完成后写入 settings.onboardingDone=true"
+    type: ui
+    measurable: false
+  - id: AC-8
+    text: "前端 React ErrorBoundary 包裹各主视图，捕获渲染错误后显示友好降级 UI 而非白屏"
+    type: ui
+    measurable: false
+  - id: AC-9
+    text: "全局键盘快捷键：B=看板 W=工作区 A=动态 P=项目 L=日志 T=测试 R=发布，? 显示快捷键帮助面板"
+    type: ui
+    measurable: false
+
+tasks:
+  # ===== wave 0: 后端 API =====
+  - id: T1
+    title: "server: GET /api/health + GET /api/stats + POST /api/docs/release/:reqId"
+    type: impl
+    wave: 0
+    depends_on: []
+    acceptance: [AC-1, AC-3, AC-4]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  - id: T2
+    title: "server: GET /api/backup (stream file) + POST /api/restore (multipart upload)"
+    type: impl
+    wave: 0
+    depends_on: []
+    acceptance: [AC-2]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  # ===== wave 1: 前端核心 =====
+  - id: T3
+    title: "client: ErrorBoundary 组件 + 包裹所有主视图"
+    type: impl
+    wave: 1
+    depends_on: []
+    acceptance: [AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T4
+    title: "client: DashboardView (统计 API + 纯 CSS 条形图 + 数字卡片)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T5
+    title: "client: ArchiveView (归档列表+搜索+恢复) + App.tsx 导航完善"
+    type: impl
+    wave: 1
+    depends_on: []
+    acceptance: [AC-6]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T6
+    title: "client: OnboardingWizard (5步 + settings.onboardingDone 检测)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-7]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T7
+    title: "client: 全局键盘快捷键 hook + 快捷键帮助面板"
+    type: impl
+    wave: 1
+    depends_on: []
+    acceptance: [AC-9]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+risks:
+  - "POST /api/restore 热替换 DB 时有并发写风险 → 先关闭 WAL checkpoint，再覆盖，再重新打开"
+  - "GET /api/backup 流式传输大文件 → 用 fs.createReadStream + Hono stream()"
+  - "OnboardingWizard 首次检测依赖 GET /api/settings.onboardingDone → 若 key 不存在视为 false"
+
+out_of_scope:
+  - "性能优化虚拟滚动 (M5-07) — 需要 react-virtual，数据量未达瓶颈"
+  - "API 文档自动生成 (M5-03) — OpenAPI 解析复杂，留后续"
+  - "全局批量操作 (PRD §3.2.4 P2)"
+
+notes: |
+  M5 是收尾里程碑：健康检查让运维可监控；备份/恢复保障数据安全；
+  统计仪表板给团队 overview；OnboardingWizard 让新用户快速上手；
+  ErrorBoundary 消除白屏；键盘快捷键提升效率。
+  发布文档生成 (M5-04) 将 events + release_runs 聚合成 Markdown，
+  自动填充 requirements.release_doc 字段（M0 已预留）。
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# M5 Polish & Productize 业务背景
+
+全部核心功能（M0-M4+M2.5）完成后，M5 打磨产品化体验：
+
+1. **可观测性**：/api/health 实时暴露系统状态，运维可接入监控
+2. **数据安全**：备份下载/恢复上传，单文件 SQLite 极简运维
+3. **统计洞察**：DashboardView 展示需求流转效率，识别阶段瓶颈
+4. **归档管理**：ArchiveView 让已发布/废弃需求不污染主看板
+5. **新用户体验**：OnboardingWizard 引导完成初始配置
+6. **可靠性**：ErrorBoundary 防白屏，全局快捷键提效

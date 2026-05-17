@@ -1,0 +1,164 @@
+---
+spec_version: "1.0"
+title: "DevFlow M0 Foundation — monorepo骨架+看板UI+基础CRUD"
+priority: critical
+kind: no_code
+
+planned_release_date: 2026-05-24
+tags: ["M0", "foundation", "monorepo", "backend", "frontend"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "monorepo 根目录含 client/ server/ shared/ 三个 workspace，npm install 无报错"
+    type: behavior
+    measurable: true
+  - id: AC-2
+    text: "npm run dev 同时启动后端(4000)和前端(5173)，前端通过 Vite proxy /api 访问后端"
+    type: behavior
+    measurable: true
+  - id: AC-3
+    text: "GET /api/requirements 返回200+JSON数组，POST /api/requirements 创建需求，PATCH /api/requirements/:id 更新"
+    type: api
+    measurable: true
+  - id: AC-4
+    text: "浏览器打开 localhost:5173，显示看板视图(6列:backlog/analyzing/development/uat/prerelease/released)"
+    type: ui
+    measurable: false
+  - id: AC-5
+    text: "shared/src/index.ts 导出 Stage / Priority / Requirement 类型，server 和 client 都能 import"
+    type: behavior
+    measurable: true
+  - id: AC-6
+    text: "GET /api/settings 返回 workspaceRoot 等配置，PUT /api/settings 可更新"
+    type: api
+    measurable: true
+  - id: AC-7
+    text: "SQLite 数据库在 server/data/ 下自动创建，bootstrap() 在启动时幂等执行"
+    type: data
+    measurable: true
+
+tasks:
+  - id: T1
+    title: "初始化 monorepo 根配置(package.json workspace + tsconfig)"
+    type: config
+    wave: 0
+    depends_on: []
+    acceptance: [AC-1]
+    verify_commands:
+      - "cd /Users/jiangjianmin/ai/code/dev-flow-agentein && node -e \"const p=require('./package.json');if(!p.workspaces)throw new Error('no workspaces')\""
+    risk: low
+
+  - id: T2
+    title: "server workspace: Hono + better-sqlite3 + Drizzle + bootstrap() + requirements CRUD"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-3, AC-6, AC-7]
+    verify_commands:
+      - "cd /Users/jiangjianmin/ai/code/dev-flow-agentein && node -e \"require('./server/src/db/index.js')\" 2>&1 | grep -v Error || true"
+    risk: medium
+
+  - id: T3
+    title: "shared workspace: Stage/Priority/Requirement 等核心类型 + canTransition()"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-5]
+    verify_commands:
+      - "cd /Users/jiangjianmin/ai/code/dev-flow-agentein/shared && node -e \"const s=require('./src/index.js');if(!s.STAGE_TRANSITIONS)throw new Error('missing')\""
+    risk: low
+
+  - id: T4
+    title: "client workspace: Vite + React18 + TypeScript + Zustand + React Query + 基础路由"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-2]
+    verify_commands:
+      - "cd /Users/jiangjianmin/ai/code/dev-flow-agentein/client && npx tsc --noEmit 2>&1 | head -20"
+    risk: medium
+
+  - id: T5
+    title: "前端 BoardView 看板 + NavSidebar + App.tsx 路由"
+    type: impl
+    wave: 2
+    depends_on: [T3, T4]
+    acceptance: [AC-4]
+    verify_commands:
+      - "cd /Users/jiangjianmin/ai/code/dev-flow-agentein/client && npx tsc --noEmit 2>&1 | head -5"
+    risk: medium
+
+  - id: T6
+    title: "前端 apiClient.ts + React Query hooks (requirements CRUD)"
+    type: impl
+    wave: 2
+    depends_on: [T3, T4]
+    acceptance: [AC-3]
+    verify_commands:
+      - "cd /Users/jiangjianmin/ai/code/dev-flow-agentein/client && npx tsc --noEmit 2>&1 | head -5"
+    risk: low
+
+risks:
+  - "better-sqlite3 native binding 编译 → 确保 Node >= 18，若编译失败改用 sql.js"
+  - "Drizzle ORM 与 better-sqlite3 版本兼容性"
+
+out_of_scope:
+  - "Agent执行(M1)"
+  - "分析引擎(M2)"
+  - "测试质量模块(M2.5)"
+  - "发布自动化(M3)"
+  - "运维日志(M4)"
+
+notes: |
+  M0 交付物：可运行的开发环境 + 看板可用
+  技术栈：Node 20 / Hono / better-sqlite3 / React 18 / Vite / Zustand / TanStack Query
+  设计语言：深色主题 bg:#1a1b2e surface:#252640 accent:#4a9eff
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# M0 Foundation 业务背景
+
+从零搭建 DevFlow v2 研发全生命周期平台的 monorepo 骨架，实现：
+1. client/server/shared 三包 workspace 结构
+2. 后端：Hono + SQLite + requirements 基础 CRUD + settings API
+3. 前端：React 18 + Vite + 看板视图（6列）+ NavSidebar
+4. 共享类型包：Stage/Priority/Requirement/STAGE_TRANSITIONS
+
+## 目录结构目标
+
+```
+dev-flow-agentein/
+├── package.json             # workspace 根，scripts: dev / build
+├── tsconfig.base.json
+├── client/                  # 前端
+│   ├── package.json
+│   ├── vite.config.ts       # proxy /api → localhost:4000
+│   ├── index.html
+│   └── src/
+│       ├── main.tsx
+│       ├── App.tsx
+│       ├── api/
+│       │   └── client.ts    # fetch wrapper + hooks
+│       ├── views/
+│       │   ├── BoardView.tsx
+│       │   └── SettingsModal.tsx
+│       └── components/
+│           └── NavSidebar.tsx
+├── server/                  # 后端
+│   ├── package.json
+│   └── src/
+│       ├── index.ts         # Hono app 入口
+│       ├── db/
+│       │   └── index.ts     # schema + bootstrap()
+│       └── routes/
+│           ├── requirements.ts
+│           └── settings.ts
+└── shared/                  # 共享类型
+    ├── package.json
+    └── src/
+        └── index.ts
+```

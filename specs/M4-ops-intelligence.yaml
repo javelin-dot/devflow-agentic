@@ -1,0 +1,180 @@
+---
+spec_version: "1.0"
+title: "DevFlow M4 Ops Intelligence — SSH日志排查+AI诊断+三栏运维视图"
+priority: critical
+kind: no_code
+
+planned_release_date: 2026-08-31
+tags: ["M4", "ssh", "logs", "diagnosis", "ai", "ops"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "SshService.exec(target, cmd) 通过 ssh2 执行远程命令，返回 { stdout, stderr, exitCode }；支持 direct + jump_global 两种连接模式"
+    type: impl
+    measurable: true
+  - id: AC-2
+    text: "logCommandWhitelist.check(cmd) 只允许只读命令（tail/grep/awk/sed/cat/ls/find/wc 等），拒绝写操作符号（>/>>/:;&&||$()反引号）"
+    type: impl
+    measurable: true
+  - id: AC-3
+    text: "CRUD /api/log-targets；POST /api/logs/exec { targetId, cmd } 执行白名单命令并返回输出"
+    type: api
+    measurable: true
+  - id: AC-4
+    text: "POST /api/logs/chat 以 SSE 流式推送 LogStreamEvent（thinking/command/result/answer），AI 循环最多 10 跳"
+    type: api
+    measurable: true
+  - id: AC-5
+    text: "GET /api/log-sessions, POST /api/log-sessions, DELETE /api/log-sessions/:id 管理排查会话历史"
+    type: api
+    measurable: true
+  - id: AC-6
+    text: "前端 LogsView：三栏布局（LogsSidebar 左/LogChatPanel 中/RightRail 右），响应式折叠"
+    type: ui
+    measurable: false
+  - id: AC-7
+    text: "LogChatPanel：输入框发送查询 → SSE 实时渲染思考/命令/结果，5-Tab（trace/conversation/summary/raw/report）"
+    type: ui
+    measurable: false
+  - id: AC-8
+    text: "LogsSidebar：日志目标列表按项目/环境分组，新增/编辑目标面板"
+    type: ui
+    measurable: false
+
+tasks:
+  # ===== wave 0: DB + 包 =====
+  - id: T1
+    title: "bootstrap 新增 log_targets / log_chat_sessions 表"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-3, AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  # ===== wave 1: 后端服务 =====
+  - id: T2
+    title: "server: SshService (ssh2 封装，direct + jump_global 模式)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-1]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T3
+    title: "server: logCommandWhitelist (白名单过滤 + 引号感知 + 危险符号检测)"
+    type: impl
+    wave: 1
+    depends_on: []
+    acceptance: [AC-2]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  - id: T4
+    title: "server: /api/log-targets CRUD + /api/logs/exec 路由"
+    type: impl
+    wave: 1
+    depends_on: [T2, T3]
+    acceptance: [AC-3]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  - id: T5
+    title: "server: LogDiagnosisService (AI排查循环，ClaudeSession + SSH exec工具调用)"
+    type: impl
+    wave: 1
+    depends_on: [T2, T3]
+    acceptance: [AC-4]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T6
+    title: "server: /api/logs/chat SSE路由 + /api/log-sessions CRUD"
+    type: impl
+    wave: 1
+    depends_on: [T5]
+    acceptance: [AC-4, AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  # ===== wave 2: 前端 =====
+  - id: T7
+    title: "client: 共享类型 (LogTarget/LogChatSession/LogStreamEvent) + API hooks"
+    type: impl
+    wave: 2
+    depends_on: [T4, T6]
+    acceptance: [AC-6, AC-7, AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T8
+    title: "client: LogsView三栏框架 + LogsSidebar (目标列表+新增编辑)"
+    type: impl
+    wave: 2
+    depends_on: [T7]
+    acceptance: [AC-6, AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T9
+    title: "client: LogChatPanel (SSE消费+5-Tab结果视图) + RightRail (会话历史+目标信息)"
+    type: impl
+    wave: 2
+    depends_on: [T7]
+    acceptance: [AC-7]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+risks:
+  - "SSH 连接在无真实服务器时会 timeout → SshService 捕获所有 SSH 错误，返回 {exitCode:1, stderr:message}"
+  - "AI 工具调用解析依赖 claude stream-json 格式 → 用 try/catch，解析失败按文本处理"
+  - "命令白名单边界：grep -P PCRE 支持取决于目标服务器 → 白名单只过滤命令本身，不限制 flag"
+  - "SSE 长连接断开 → onAbort 清理订阅，诊断循环提前结束"
+
+out_of_scope:
+  - "node-pty 终端服务 (M4-15) — 需要 native 编译，留 M5"
+  - "TerminalPanel xterm.js (M4-16) — 依赖 node-pty，留 M5"
+  - "多跳自定义链路 jump_custom (M4-04) — 超过3跳场景，留后续迭代"
+  - "链路日志自动归档 (M4-14)"
+  - "告警列表 AlertManager (M4-12 右栏预留)"
+
+notes: |
+  M4 核心是 AI 驱动的运维日志排查：用户在 LogChatPanel 输入故障描述 →
+  LogDiagnosisService 构建系统 prompt（含目标主机/目录信息） →
+  ClaudeSession 以 stream-json 输出，遇到 tool_use(exec_remote_command) 时
+  → logCommandWhitelist 检查 → SshService.exec() 执行 → 结果注入下一轮 →
+  最终 AI 给出根因分析和修复建议。
+  无真实 SSH 目标时，exec 返回模拟错误；前端仍可正常运行展示流程。
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# M4 Ops Intelligence 业务背景
+
+M3 完成发布流水线；M4 补全运维闭环——上线后发现问题时，可在 DevFlow 内直接用 AI 排查：
+
+1. **日志目标管理**：配置目标主机（IP/SSH凭证/日志目录/glob），按项目+环境分组
+2. **SSH 安全执行**：ssh2 建立连接，logCommandWhitelist 过滤危险命令，输出截断 2MB
+3. **AI 诊断循环**：ClaudeSession 驱动多轮推理，tool_use 触发 SSH 执行，最多 10 跳
+4. **三栏 LogsView**：左侧目标树 + 中间对话+5-Tab结果 + 右侧会话历史
+
+## 关键安全约束
+
+- 白名单命令：tail grep awk sed cat ls find wc head sort uniq cut du df ps
+- 禁止符号：> >> ; && || $() 反引号
+- 双引号内的 $ 和反引号也要拒绝
+- 单次输出上限：2MB（截断并附注"[truncated]"）
+- 会话只能访问 scopedTargetIds 内的目标

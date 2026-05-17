@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+
+# Build outputs (workspace packages)
+dist/
+build/
+
+# Environment & secrets（保留 .env.example 等模板可自行 git add）
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local
+
+# SQLite（运行时数据库目录；导出/备份文件）
+server/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Logs & diagnostics
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Tests & coverage
+coverage/
+.nyc_output/
+
+# TypeScript
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors（如需共享 VS Code 配置，删除下一行或改用 ! 例外规则）
+.idea/
+
+# IDE
+.vscode/
+
+# Node
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+bun.lockb
+bun.lock
+bun.lock.json
+bun.lock.yaml
+bun.lock.json
+
+.cursor/
+.qoder/

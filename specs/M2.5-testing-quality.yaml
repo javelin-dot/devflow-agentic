@@ -1,0 +1,175 @@
+---
+spec_version: "1.0"
+title: "DevFlow M2.5 Testing & Quality — 测试执行+质量门禁+缺陷管理"
+priority: critical
+kind: no_code
+
+planned_release_date: 2026-09-30
+tags: ["M2.5", "testing", "quality-gate", "defects", "test-runner", "coverage"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "CRUD /api/test-plans；GET /api/test-plans/by-req/:reqId 返回该需求下的测试计划（含用例列表）"
+    type: api
+    measurable: true
+  - id: AC-2
+    text: "POST /api/test-runs 以 SSE 流式推送 TestRunEvent，执行 shell 命令并收集 passed/failed/total；GET /api/test-runs/:id 返回历史"
+    type: api
+    measurable: true
+  - id: AC-3
+    text: "POST /api/gate-checks/run 执行对应阶段转换的所有检查项，以 SSE 推送进度；结果写入 gate_checks 表"
+    type: api
+    measurable: true
+  - id: AC-4
+    text: "GET /api/gate-checks?reqId= 返回门禁检查历史列表；每条包含 checkType/result/detail"
+    type: api
+    measurable: true
+  - id: AC-5
+    text: "CRUD /api/defects；POST 自动关联 reqId+subTaskId；GET /api/defects?reqId= 按严重度排序"
+    type: api
+    measurable: true
+  - id: AC-6
+    text: "前端 TestDashboard：展示需求维度的测试计划列表、最近 test-run 结果、门禁状态徽章"
+    type: ui
+    measurable: false
+  - id: AC-7
+    text: "前端 DefectListPanel：缺陷列表（severity/status/title），可新建、关闭、过滤"
+    type: ui
+    measurable: false
+  - id: AC-8
+    text: "前端 QualityGateModal：需求卡片上触发阶段转换时展示门禁检查结果，全部通过才允许继续"
+    type: ui
+    measurable: false
+
+tasks:
+  # ===== wave 0: DB =====
+  - id: T1
+    title: "bootstrap 新增 test_plans / test_cases / test_runs / gate_checks / defects 表"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-1, AC-2, AC-3, AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  # ===== wave 1: 后端服务 =====
+  - id: T2
+    title: "server: TestRunner 服务 (spawn shell + exit-code解析 + stdout/stderr 摘要)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-2]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T3
+    title: "server: QualityGateService (预定义门禁规则 + 逐项检查 + 结果写库)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-3, AC-4]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T4
+    title: "server: /api/test-plans CRUD + /api/test-runs SSE路由"
+    type: impl
+    wave: 1
+    depends_on: [T2]
+    acceptance: [AC-1, AC-2]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  - id: T5
+    title: "server: /api/gate-checks/run SSE路由 + GET历史 + /api/defects CRUD"
+    type: impl
+    wave: 1
+    depends_on: [T3]
+    acceptance: [AC-3, AC-4, AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  # ===== wave 2: 前端 =====
+  - id: T6
+    title: "client: 共享类型 (TestPlan/TestCase/TestRun/GateCheck/Defect) + API hooks"
+    type: impl
+    wave: 2
+    depends_on: [T4, T5]
+    acceptance: [AC-6, AC-7, AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T7
+    title: "client: TestDashboard (测试计划列表+run结果+门禁状态) + App.tsx 导航扩展"
+    type: impl
+    wave: 2
+    depends_on: [T6]
+    acceptance: [AC-6]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T8
+    title: "client: DefectListPanel (严重度/状态/新建/关闭) + QualityGateModal (门禁结果展示)"
+    type: impl
+    wave: 2
+    depends_on: [T6]
+    acceptance: [AC-7, AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+risks:
+  - "测试命令在 CI 环境可能超时 → TestRunner 强制 5min 超时，超时后 kill 进程标为 error"
+  - "不同框架的输出格式各异 → TestRunner 只解析 exit code；通过率统计用 grep 提取 N passed"
+  - "门禁检查 all_subtasks_done 只检查 DB 状态，verify_commands 不在 M2.5 实际执行（占位）"
+  - "SSE 长连接断开 → onAbort 清理，runner 继续写 DB"
+
+out_of_scope:
+  - "AI TestGenerator 自动生成测试代码 (M2.5-04) — 留后续迭代"
+  - "PIV-TDD Loop 集成到 TaskExecutor (M2.5-05) — 留后续迭代"
+  - "CoverageCollector 覆盖率采集 (M2.5-08) — 需框架插桩"
+  - "PerformanceBaseline 性能基线 (M2.5-18)"
+  - "回归测试选择器影响分析 (M2.5-19)"
+  - "TestSuite 层次 (test_plans → test_cases 两层扁平化，去掉中间 TestSuite 表)"
+
+notes: |
+  M2.5 核心是让质量门禁可运行：TestRunner 执行 shell 测试命令 → 收集结果 →
+  写入 test_runs 表。QualityGateService 检查预定义条件（all_subtasks_done /
+  no_open_defects_p0 / test_run_pass）→ 写 gate_checks 表。
+  前端 QualityGateModal 在 BoardView 点击卡片触发阶段转换时弹出，显示检查结果。
+  TestRunner 不依赖特定框架，只跑命令 + 解析 exit code，"通过"="exit 0"。
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# M2.5 Testing & Quality 业务背景
+
+M2 让 SubTask 自动执行；M2.5 补充验证闭环：
+
+1. **测试计划管理**：为需求维护 TestPlan（含 TestCase 列表），来源可以是验收标准或手动添加
+2. **测试执行引擎**：POST /api/test-runs → SSE → spawn 测试命令（npm test/pytest/go test）→ 解析 exit code + 摘要
+3. **质量门禁**：预定义 3 条转换门禁（development→uat / uat→prerelease / prerelease→released），逐项执行检查，结果写 gate_checks
+4. **缺陷管理**：测试失败 → 手动或自动创建 Defect，关联 reqId + subTaskId，按 severity 跟踪
+5. **前端**：TestDashboard 总览 + DefectListPanel + QualityGateModal 拦截转换
+
+## 门禁检查项定义
+
+| 转换 | 检查项（type） | 判定逻辑 |
+|------|--------------|---------|
+| development→uat | all_subtasks_done | DB: 所有 sub_tasks.status = done |
+| development→uat | no_open_defects_p0 | DB: defects.severity=P0 且 status=open 计数=0 |
+| development→uat | test_run_pass | 最近一条 test_run.status=passed |
+| uat→prerelease | no_open_defects_p0_p1 | P0/P1 open=0 |
+| uat→prerelease | acceptance_test_pass | 最近 test_run(type=acceptance).status=passed |
+| prerelease→released | regression_pass | 最近 test_run(type=regression).status=passed |
+| prerelease→released | no_open_defects_any | 无任何 open defect |

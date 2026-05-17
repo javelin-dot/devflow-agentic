@@ -1,0 +1,184 @@
+---
+spec_version: "1.0"
+title: "DevFlow M3 Release Automation — 发布状态机+冲突解决+Jenkins集成"
+priority: critical
+kind: no_code
+
+planned_release_date: 2026-07-31
+tags: ["M3", "release", "merge", "conflict", "jenkins", "sse"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "POST /api/release/start 以 SSE 流式推送 ReleaseEvent，state 按 idle→preparing→merging→pushing→triggering→done 推进"
+    type: api
+    measurable: true
+  - id: AC-2
+    text: "合并冲突时 state 自动暂停到 paused-conflict，POST /api/release/:id/resume 恢复执行"
+    type: api
+    measurable: true
+  - id: AC-3
+    text: "POST /api/release/:id/cancel 任意非终态均可取消；GET /api/release/by-req/:reqId 返回历史列表"
+    type: api
+    measurable: true
+  - id: AC-4
+    text: "GET /api/release/:id/conflicts 返回冲突文件列表及解析后的冲突块（ours/theirs/marker 行号）"
+    type: api
+    measurable: true
+  - id: AC-5
+    text: "CRUD /api/jenkins-templates；POST /api/jenkins-templates/:id/trigger 触发构建并返回 { buildUrl, status }"
+    type: api
+    measurable: true
+  - id: AC-6
+    text: "POST /api/merge-publish/start 以 SSE 推送合并发布进度（dev→uat 合并+CI触发）"
+    type: api
+    measurable: true
+  - id: AC-7
+    text: "前端 ReleaseView：展示发布历史列表，可按需求过滤，状态实时刷新"
+    type: ui
+    measurable: false
+  - id: AC-8
+    text: "前端 QuickPublishPanel：选择 Jenkins 模板+参数，一键触发，实时展示构建日志"
+    type: ui
+    measurable: false
+  - id: AC-9
+    text: "前端 ConflictResolutionView：三列展示（OURS/RESULT/THEIRS），Accept Ours/Theirs 按钮解决冲突块"
+    type: ui
+    measurable: false
+
+tasks:
+  # ===== wave 0: DB 扩展 =====
+  - id: T1
+    title: "bootstrap 新增 release_runs / jenkins_templates 表"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-1, AC-3, AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  # ===== wave 1: 后端核心服务 =====
+  - id: T2
+    title: "server: ReleaseRunner 状态机服务 (idle→done + paused-conflict 分支)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-1, AC-2]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T3
+    title: "server: /api/release 路由 (start SSE / resume / cancel / by-req / conflicts / ai-suggest)"
+    type: impl
+    wave: 1
+    depends_on: [T2]
+    acceptance: [AC-1, AC-2, AC-3, AC-4]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T4
+    title: "server: MergePublishRunner + /api/merge-publish/start SSE 路由"
+    type: impl
+    wave: 1
+    depends_on: [T2]
+    acceptance: [AC-6]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T5
+    title: "server: CRUD /api/jenkins-templates + POST /:id/trigger (HTTP触发+状态轮询)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  # ===== wave 2: 前端 =====
+  - id: T6
+    title: "client: 共享类型 (ReleaseRun/ReleaseEvent/JenkinsTemplate) + API hooks"
+    type: impl
+    wave: 2
+    depends_on: [T3, T4, T5]
+    acceptance: [AC-7, AC-8, AC-9]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T7
+    title: "client: ReleaseView (发布历史列表+状态徽章) + App.tsx 导航扩展"
+    type: impl
+    wave: 2
+    depends_on: [T6]
+    acceptance: [AC-7]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T8
+    title: "client: QuickPublishPanel (Jenkins模板选择+参数填写+触发+日志SSE)"
+    type: impl
+    wave: 2
+    depends_on: [T6]
+    acceptance: [AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T9
+    title: "client: ConflictResolutionView (三列冲突块解析+Accept Ours/Theirs+POST resume)"
+    type: impl
+    wave: 2
+    depends_on: [T6]
+    acceptance: [AC-9]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+risks:
+  - "simple-git merge 在无真实远程分支时失败 → 状态机 catch merge error → state=error，不崩溃"
+  - "Jenkins 地址不可达 → trigger 接口 try/catch，返回 { status:'error', message } 不抛 500"
+  - "SSE 在 Hono streamSSE 中长连接断开 → onAbort 清理订阅，runner 继续执行"
+  - "冲突文件解析依赖 git merge 留下的标记 → 若文件无标记则返回空 conflictBlocks"
+
+out_of_scope:
+  - "Monaco Editor 三列 diff 视图（使用 textarea 模拟，Monaco 集成留 M5）"
+  - "AI 冲突建议 SSE（/api/release/:id/ai-suggest 实现为占位，M3.5 完善）"
+  - "测试与质量门禁 (M2.5)"
+  - "运维日志 SSH (M4)"
+  - "发布文档自动生成 (M5)"
+
+notes: |
+  M3 核心是打通 prerelease 阶段的发布流水线：
+  1. mergePublish 模式：dev 分支 merge 到 uat，触发 CI/CD
+  2. release 模式：uat merge 到 master，触发正式发布构建
+  3. quickPublish 模式：直接触发 Jenkins Job，不做 merge
+  冲突解决是阻塞点：state=paused-conflict → 前端展示 ConflictResolutionView
+  → 用户选择 ours/theirs → POST /resume → 继续。
+  prerelease→released 必须 actor=user（遵循 harness INV-05a）。
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# M3 Release Automation 业务背景
+
+M2 让 SubTask 自动执行完毕（development 阶段）；M3 打通后续发布流水线：
+
+1. **MergePublish**：development 完成后，将 dev worktree 分支合并到 uat 分支，触发 CI
+2. **Release**：uat 通过后，将 uat 分支合并到 master，执行版本号 bump，触发正式构建
+3. **冲突解决**：合并遇到冲突时，状态机暂停，用户在 ConflictResolutionView 解决后恢复
+4. **QuickPublish**：直接选择 Jenkins 模板触发构建，不经过 merge 流程
+5. **Jenkins 集成**：维护 JenkinsTemplate（job路径+参数模板），变量替换后触发构建
+
+## 关键约束（来自 harness/05-stage-gates.md § 5）
+
+- `prerelease → released` 必须 actor=user，服务端校验 X-Actor header
+- 发布完成后 PATCH /requirements/:id { stage:'released' }，服务端自动写 releasedAt
+- release_run 必须有 verdict='accepted' 才能推进到 released

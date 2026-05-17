@@ -1,0 +1,167 @@
+---
+spec_version: "1.0"
+title: "DevFlow M2 Agent Orchestra — 分析编排+SubTask调度+看板交互"
+priority: critical
+kind: no_code
+
+planned_release_date: 2026-06-30
+tags: ["M2", "analysis", "subtasks", "dag", "scheduler", "contracts"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "POST /api/analysis/start 并行启动多 Agent 分析，返回 { analyses: [{id,reqId,agent,status}] }"
+    type: api
+    measurable: true
+  - id: AC-2
+    text: "GET /api/analysis/by-req/:reqId 返回分析列表，含 status/output/proposedTasks 字段"
+    type: api
+    measurable: true
+  - id: AC-3
+    text: "POST /api/analysis/:id/choose 选定候选，自动派生 subTasks 入库，requirements.stage → development"
+    type: api
+    measurable: true
+  - id: AC-4
+    text: "GET /api/subtasks/by-req/:reqId 返回 SubTask 列表，POST /api/subtasks 创建，PATCH /api/subtasks/:id 更新"
+    type: api
+    measurable: true
+  - id: AC-5
+    text: "DAG 拓扑排序 + 环检测：dag.sortWaves(tasks) 返回分层 SubTask[][] 或抛 CycleError"
+    type: impl
+    measurable: true
+  - id: AC-6
+    text: "TaskScheduler.schedule(reqId) 按 wave 顺序调度 SubTask，同 project 串行，跨 project 并行"
+    type: impl
+    measurable: true
+  - id: AC-7
+    text: "前端 AnalysisComparePanel：展示多候选分析，支持查看 proposedTasks，点击选择候选"
+    type: ui
+    measurable: false
+  - id: AC-8
+    text: "前端 SubTaskPanel：按 wave 分组展示 SubTask 列表，状态徽章实时刷新"
+    type: ui
+    measurable: false
+
+tasks:
+  # ===== wave 0: DB 扩展 =====
+  - id: T1
+    title: "bootstrap 新增 analyses / contracts 表"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-1, AC-2, AC-3]
+    verify_commands:
+      - "npx tsx -e \"import {db} from './server/src/db/index.ts'; db.exec(''); const t=db.prepare(\\\"SELECT name FROM sqlite_master WHERE type='table'\\\").all(); console.log(t.map(r=>r.name).join(','))\""
+    risk: low
+
+  # ===== wave 1: 后端服务 =====
+  - id: T2
+    title: "server: AnalysisService (analysisPrompt构建器 + output解析器)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-1, AC-2]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T3
+    title: "server: /api/analysis 路由 (start / by-req / choose / cancel / retry)"
+    type: impl
+    wave: 1
+    depends_on: [T2]
+    acceptance: [AC-1, AC-2, AC-3]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T4
+    title: "server: /api/subtasks 路由 (by-req / create / patch / delete)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-4]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  # ===== wave 2: DAG + 调度器 =====
+  - id: T5
+    title: "server: DAG 拓扑排序+环检测 util + TaskScheduler + TaskExecutor"
+    type: impl
+    wave: 2
+    depends_on: [T4]
+    acceptance: [AC-5, AC-6]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  # ===== wave 3: 前端 =====
+  - id: T6
+    title: "client: 共享类型补充 (RequirementAnalysis / AnalysisOutput) + API hooks"
+    type: impl
+    wave: 3
+    depends_on: [T3, T4]
+    acceptance: [AC-7, AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T7
+    title: "client: AnalysisComparePanel (多候选展示+选择)"
+    type: impl
+    wave: 3
+    depends_on: [T6]
+    acceptance: [AC-7]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T8
+    title: "client: SubTaskPanel (wave分组+状态徽章) + ChatWorkspace 集成"
+    type: impl
+    wave: 3
+    depends_on: [T6]
+    acceptance: [AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+risks:
+  - "analysis output 由 LLM 生成，JSON 格式不稳定 → 用 try/catch + schema 宽松解析，parse 失败当 raw text"
+  - "DAG 环检测需可靠 → 用 Kahn 算法，入度=0 队列推进，余节点>0 表示有环"
+  - "TaskExecutor 并发 + worktree 竞争 → 按 project 串行（inflight set），跨 project 并行"
+
+out_of_scope:
+  - "CodexSession / DeepSeekSession / GeminiSession 适配器 (M2-02/03/04，未安装 CLI 无法测试)"
+  - "Agent可用性UI更新 (M2-06)"
+  - "测试与质量 (M2.5)"
+  - "发布状态机 ReleaseRunner (M3)"
+
+notes: |
+  M2 核心是让 analyzing 阶段跑通：多 Agent 并行分析需求 → 用户选候选 →
+  自动派生 SubTask → TaskScheduler 按 DAG wave 逐层执行 SubTask。
+  ClaudeSession 分析时使用 --print 模式，output 用 JSON 解析 proposedTasks。
+  choose 端点是 analyzing→development 的唯一通道（禁止直接 PATCH stage）。
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# M2 Agent Orchestra 业务背景
+
+M1 让 Agent 手动跑起来（人工 ChatWorkspace）；M2 进一步让 Agent 自动编排：
+
+1. **分析编排**：POST /api/analysis/start 并行启动多 Agent，每个 Agent 分析需求并输出 proposedTasks
+2. **候选选择**：用户/Agent 在 AnalysisComparePanel 选择最优分析候选
+3. **自动落地**：choose 端点自动派生 SubTask、推进 stage 到 development
+4. **DAG 调度**：TaskScheduler 按 wave + project 约束执行 SubTask，失败自动创建修复 SubTask
+5. **可观测性**：SubTaskPanel 实时展示执行状态
+
+## 关键设计约束（来自 harness/05-stage-gates.md）
+
+- analyzing→development 唯一通道：POST /api/analysis/:id/choose（禁止直接 PATCH stage）
+- choose 前校验：analysis.status ∈ {awaiting, done}
+- choose 副作用：批量 INSERT sub_tasks + UPDATE requirements.stage='development' + requirements.analysis_chosen_id
+- DAG 约束：同 project 串行（inflight set），跨 project 可并行

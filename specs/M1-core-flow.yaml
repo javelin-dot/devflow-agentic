@@ -1,0 +1,216 @@
+---
+spec_version: "1.0"
+title: "DevFlow M1 Core Flow — Agent执行+项目管理+看板交互"
+priority: critical
+kind: no_code
+
+planned_release_date: 2026-05-31
+tags: ["M1", "agent", "sessions", "projects", "worktree", "chat"]
+workspace: null
+
+acceptance:
+  - id: AC-1
+    text: "GET /api/projects 返回项目列表，POST /api/projects/scan 扫描 Git 目录写入 DB"
+    type: api
+    measurable: true
+  - id: AC-2
+    text: "POST /api/sessions 创建会话，GET /api/sessions/by-req/:reqId 返回列表，PATCH 归档"
+    type: api
+    measurable: true
+  - id: AC-3
+    text: "POST /api/agent/run 以 SSE 流式返回 NormalizedEntry，exit 帧关闭流"
+    type: api
+    measurable: true
+  - id: AC-4
+    text: "POST /api/agent/permission/:sessionId/:entryId/:decision 审批工具执行"
+    type: api
+    measurable: true
+  - id: AC-5
+    text: "GET /api/agent/availability 返回系统上已安装的 claude/codex/gemini CLI"
+    type: api
+    measurable: true
+  - id: AC-6
+    text: "GET /api/requirements/:id/worktree-status 返回 {ready, projects[]}"
+    type: api
+    measurable: true
+  - id: AC-7
+    text: "前端 ProjectsView 展示项目列表，可扫描目录、编辑项目配置"
+    type: ui
+    measurable: false
+  - id: AC-8
+    text: "前端 ChatWorkspace 打开需求详情侧边栏，列出 sessions，可新建+运行 Agent"
+    type: ui
+    measurable: false
+  - id: AC-9
+    text: "SSE 流式消息在 ChatPanel 实时渲染，tool_use pending 显示审批按钮"
+    type: ui
+    measurable: false
+  - id: AC-10
+    text: "前端 ActivityView 显示 events 时间线，支持按 reqId 过滤"
+    type: ui
+    measurable: false
+
+tasks:
+  # ===== 后端 wave 0: DB 扩展 =====
+  - id: T1
+    title: "bootstrap 新增 projects / sessions / messages / sub_tasks 表"
+    type: migration
+    wave: 0
+    depends_on: []
+    acceptance: [AC-1, AC-2]
+    verify_commands:
+      - "npx tsx -e \"import {db} from './server/src/db/index.ts'; const t=db.prepare(\\\"SELECT name FROM sqlite_master WHERE type='table'\\\").all(); console.log(t.map(r=>r.name).join(','))\""
+    risk: low
+
+  # ===== 后端 wave 1: projects + git + worktree =====
+  - id: T2
+    title: "server: projects CRUD 路由 + 目录扫描(simple-git)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-1]
+    verify_commands:
+      - "npx tsx server/src/index.ts & sleep 2 && curl -sf http://localhost:4000/api/projects && kill %1"
+    risk: low
+
+  - id: T3
+    title: "server: GitService(simple-git) + WorktreeService(create/status/remove)"
+    type: impl
+    wave: 1
+    depends_on: [T1]
+    acceptance: [AC-6]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  # ===== 后端 wave 2: sessions + agent =====
+  - id: T4
+    title: "server: sessions/messages CRUD 路由 + GET /sessions/:id/messages"
+    type: impl
+    wave: 2
+    depends_on: [T1]
+    acceptance: [AC-2]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  - id: T5
+    title: "server: AgentSession 基类 + SessionManager(进程池)"
+    type: impl
+    wave: 2
+    depends_on: [T4]
+    acceptance: [AC-3, AC-4, AC-5]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T6
+    title: "server: ClaudeSession 适配器(stream-json → NormalizedEntry) + POST /api/agent/run SSE"
+    type: impl
+    wave: 2
+    depends_on: [T5]
+    acceptance: [AC-3, AC-4]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: high
+
+  - id: T7
+    title: "server: /api/requirements/:id/worktree-status 端点"
+    type: impl
+    wave: 2
+    depends_on: [T3]
+    acceptance: [AC-6]
+    verify_commands:
+      - "npx tsc --noEmit --project server/tsconfig.json 2>&1 | head -5"
+    risk: low
+
+  # ===== 前端 wave 3: views =====
+  - id: T8
+    title: "client: shared 类型补充(Project/ChatSession/NormalizedEntry) + API hooks"
+    type: impl
+    wave: 3
+    depends_on: [T2, T4, T5]
+    acceptance: [AC-7, AC-8]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T9
+    title: "client: ProjectsView(项目列表+扫描+编辑) + NavSidebar 扩展"
+    type: impl
+    wave: 3
+    depends_on: [T8]
+    acceptance: [AC-7]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+  - id: T10
+    title: "client: ChatWorkspace(需求详情+session列表+agent运行) + SSE 消费器"
+    type: impl
+    wave: 3
+    depends_on: [T8]
+    acceptance: [AC-8, AC-9]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T11
+    title: "client: NormalizedEntry 渲染 + 工具审批 UI"
+    type: impl
+    wave: 3
+    depends_on: [T10]
+    acceptance: [AC-9]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: medium
+
+  - id: T12
+    title: "client: ActivityView(events 时间线) + BoardView 卡片点击→打开 ChatWorkspace"
+    type: impl
+    wave: 3
+    depends_on: [T8]
+    acceptance: [AC-10]
+    verify_commands:
+      - "npx tsc --noEmit --project client/tsconfig.app.json 2>&1 | head -5"
+    risk: low
+
+risks:
+  - "claude CLI stream-json 格式随版本变化 → 用 try/catch 容错解析，非 JSON 行当 text 处理"
+  - "PTY/进程管理在 macOS/Linux 差异 → 用 child_process.spawn 而非 pty"
+  - "simple-git worktree 操作需要干净工作区 → add worktree-status ready check"
+
+out_of_scope:
+  - "analysis 分析引擎(M2)"
+  - "SubTask DAG 调度(M2)"
+  - "发布状态机 ReleaseRunner(M3)"
+  - "运维日志 SSH(M4)"
+  - "工具审批自动策略(M2)"
+
+notes: |
+  M1 核心是让 Agent 跑起来：人工在 ChatWorkspace 输入 prompt → 后端 spawn claude CLI
+  → SSE 流式返回 NormalizedEntry → 前端渲染 → tool_use pending 显示 Approve/Reject。
+  ClaudeSession 解析 claude --output-format stream-json 的输出格式。
+
+agent:
+  profileId: null
+  preferred: "claude-code"
+---
+
+# M1 Core Flow 业务背景
+
+在 M0 看板 + CRUD 基础上，接入 AI Agent 执行能力：
+
+1. **项目管理**：扫描本地 Git 仓库，配置分支策略
+2. **会话管理**：per-need sessions，绑定 Agent CLI 类型，管理消息历史
+3. **Agent 执行**：POST /api/agent/run → SSE 流 → 前端实时渲染
+4. **工具审批**：tool_use pending → Approve/Reject → Agent 继续
+5. **Worktree**：development 阶段自动在独立目录开发
+6. **ActivityView**：全局 events 时间线可观察
+
+## 关键设计约束（来自 harness/01-architecture.md）
+
+- INV-01: 同一 chatSessionId agentLocked=true 后不能换 Agent（返回 409）
+- INV-09: 启动时孤儿 pending 消息自动标记 error
+- Agent 是**子进程**，不是独立服务；通过 SessionManager 管理
+- NormalizedEntry 是所有 Agent 输出的统一格式
