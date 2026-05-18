@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 export const SHORTCUTS: Record<string, string> = {
   b: 'board',      // B = 看板
@@ -11,7 +12,18 @@ export const SHORTCUTS: Record<string, string> = {
   '?': 'help',     // ? = 帮助
 };
 
-export function useKeyboardShortcuts(onNavigate: (view: string) => void, onHelp: () => void) {
+const PATH_MAP: Record<string, string> = {
+  board: '/board',
+  projects: '/projects',
+  testing: '/testing',
+  defects: '/defects',
+  release: '/release',
+  logs: '/logs',
+  dashboard: '/dashboard',
+};
+
+export function useKeyboardShortcuts(onHelp: () => void) {
+  const navigate = useNavigate();
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
       // Skip if user is typing in an input/textarea
@@ -22,9 +34,12 @@ export function useKeyboardShortcuts(onNavigate: (view: string) => void, onHelp:
       const key = e.key.toLowerCase();
       if (key === '?') { onHelp(); return; }
       const view = SHORTCUTS[key];
-      if (view && view !== 'help') onNavigate(view);
+      if (view && view !== 'help') {
+        const path = PATH_MAP[view];
+        if (path) navigate(path);
+      }
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [onNavigate, onHelp]);
+  }, [navigate, onHelp]);
 }

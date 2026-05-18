@@ -6,6 +6,25 @@ import { newId } from '../db/index.js';
 import type { NormalizedEntry } from '@devflow/shared';
 import type { AgentProcess } from './types.js';
 
+async function buildFetchOptions(baseOpts: RequestInit): Promise<RequestInit> {
+  const proxyUrl = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY ?? process.env.https_proxy ?? process.env.http_proxy;
+  if (!proxyUrl) return baseOpts;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // @ts-ignore undici is built into Node.js
+    const undici: any = await import('undici');
+    const ProxyAgent = undici.ProxyAgent;
+    if (!ProxyAgent) {
+      console.warn('[ClaudeAPISession] undici.ProxyAgent not available, proxy will not be used');
+      return baseOpts;
+    }
+    return { ...baseOpts, dispatcher: new ProxyAgent(proxyUrl) } as RequestInit;
+  } catch {
+    console.warn('[ClaudeAPISession] Failed to load undici ProxyAgent, proxy will not be used');
+    return baseOpts;
+  }
+}
+
 const TOOLS = [
   {
     name: 'read_file',
@@ -61,6 +80,7 @@ export class ClaudeAPISession extends EventEmitter implements AgentProcess {
   private apiKey: string;
   private model: string;
   private baseUrl: string;
+  private openaiCompatible: boolean;
   private messages: Array<{ role: 'user' | 'assistant'; content: string | Array<unknown> }> = [];
   private pendingTool: { entryId: string; toolId: string; name: string; input: Record<string, unknown> } | null = null;
   private abortController: AbortController | null = null;
@@ -70,9 +90,10 @@ export class ClaudeAPISession extends EventEmitter implements AgentProcess {
   constructor(sessionId: string, config?: { apiKey?: string; model?: string; baseUrl?: string; cwd?: string }) {
     super();
     this.sessionId = sessionId;
-    this.apiKey = config?.apiKey ?? process.env.ANTHROPIC_API_KEY ?? '';
-    this.model = config?.model ?? 'claude-3-5-sonnet-latest';
-    this.baseUrl = config?.baseUrl ?? 'https://api.anthropic.com';
+    this.apiKey = config?.apiKey ?? process.env.ANTHROPIC_API_KEY ?? process.env.ANTHROPIC_AUTH_TOKEN ?? '';
+    this.model = config?.model ?? process.env.ANTHROPIC_MODEL ?? 'claude-3-5-sonnet-latest';
+    this.baseUrl = (config?.baseUrl ?? process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com').replace(/\/$/, '');
+    this.openaiCompatible = !this.baseUrl.includes('anthropic.com');
     this.cwd = config?.cwd;
   }
 
@@ -81,10 +102,128 @@ export class ClaudeAPISession extends EventEmitter implements AgentProcess {
     this.abortController = new AbortController();
     this.messages.push({ role: 'user', content: prompt });
     this.running = true;
-    void this.runLoop();
+    if (this.openaiCompatible) {
+      void this.runLoopOpenAI();
+    } else {
+      void this.runLoopAnthropic();
+    }
   }
 
-  private async runLoop(): Promise<void> {
+  private async runLoopOpenAI(): Promise<void> {
+    try {
+      // Convert messages to OpenAI format (simplified — tools not supported in OpenAI path)
+      const openaiMessages = this.messages.map(m => {
+        if (typeof m.content === 'string') {
+          return { role: m.role, content: m.content };
+        }
+        // For array content (tool results), convert to a simple text message
+        return { role: m.role, content: JSON.stringify(m.content) };
+      });
+
+      const body = {
+        model: this.model,
+        messages: openaiMessages,
+        stream: true,
+      };
+
+      const url = `${this.baseUrl}/v1/chat/completions`;
+      console.log(`[ClaudeAPISession] OpenAI fetch → ${url}, model=${this.model}`);
+      const fetchOpts = await buildFetchOptions({
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: this.abortController?.signal,
+      });
+      const response = await fetch(url, fetchOpts);
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+      }
+
+      if (!response.body) {
+        throw new Error('Response body is null');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let assistantTextEntryId: string | null = null;
+      let finishReason: string | null = null;
+      let assistantContent = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed === 'data: [DONE]') continue;
+          if (!trimmed.startsWith('data: ')) continue;
+
+          const dataStr = trimmed.slice(6).trim();
+          if (!dataStr) continue;
+
+          let data: Record<string, unknown>;
+          try {
+            data = JSON.parse(dataStr);
+          } catch {
+            continue;
+          }
+
+          const choices = (data.choices ?? []) as Array<Record<string, unknown>>;
+          const firstChoice = choices[0];
+          if (!firstChoice) continue;
+
+          const delta = firstChoice.delta as Record<string, unknown> | undefined;
+          const content = delta?.content as string | undefined;
+
+          if (content) {
+            if (!assistantTextEntryId) {
+              assistantTextEntryId = newId('msg');
+            }
+            assistantContent += content;
+            this.emit('entry', {
+              id: assistantTextEntryId,
+              sessionId: this.sessionId,
+              type: 'assistant_message',
+              content,
+              action: null,
+              status: 'success',
+              createdAt: new Date().toISOString(),
+            } satisfies NormalizedEntry);
+          }
+
+          const fr = firstChoice.finish_reason as string | null;
+          if (fr) {
+            finishReason = fr;
+          }
+        }
+      }
+
+      this.messages.push({ role: 'assistant', content: assistantContent });
+      this.running = false;
+      this.emit('exit', finishReason === 'stop' ? 0 : 0);
+    } catch (err) {
+      this.running = false;
+      console.error('[ClaudeAPISession] OpenAI fetch failed:', err);
+      if ((err as { name?: string }).name === 'AbortError') {
+        this.emit('exit', 1);
+        return;
+      }
+      this.emit('error', err instanceof Error ? err : new Error(String(err)));
+      this.emit('exit', 1);
+    }
+  }
+
+  private async runLoopAnthropic(): Promise<void> {
     try {
       const body = {
         model: this.model,
@@ -94,8 +233,7 @@ export class ClaudeAPISession extends EventEmitter implements AgentProcess {
         stream: true,
       };
 
-      const proxyUrl = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY ?? process.env.https_proxy ?? process.env.http_proxy;
-      const response = await fetch(`${this.baseUrl}/v1/messages`, {
+      const fetchOpts = await buildFetchOptions({
         method: 'POST',
         headers: {
           'x-api-key': this.apiKey,
@@ -105,6 +243,7 @@ export class ClaudeAPISession extends EventEmitter implements AgentProcess {
         body: JSON.stringify(body),
         signal: this.abortController?.signal,
       });
+      const response = await fetch(`${this.baseUrl}/v1/messages`, fetchOpts);
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
@@ -404,7 +543,7 @@ export class ClaudeAPISession extends EventEmitter implements AgentProcess {
     });
 
     // Continue the conversation loop
-    void this.runLoop();
+    void (this.openaiCompatible ? this.runLoopOpenAI() : this.runLoopAnthropic());
   }
 
   interrupt(): void {

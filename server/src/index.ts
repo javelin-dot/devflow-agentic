@@ -4,6 +4,7 @@ import { cors } from 'hono/cors';
 import { serve } from '@hono/node-server';
 import { WebSocketServer } from 'ws';
 import { bootstrap } from './db/index.js';
+import { loadUserEnv, loadDbEnvOverrides } from './config/loadUserEnv.js';
 import { taskScheduler } from './services/scheduler.js';
 import { requirementsRouter } from './routes/requirements.js';
 import { settingsRouter } from './routes/settings.js';
@@ -31,6 +32,8 @@ import { db } from './db/index.js';
 import { handleTerminalWS } from './routes/terminal.js';
 
 bootstrap();
+loadUserEnv();
+loadDbEnvOverrides();
 
 const app = new Hono();
 app.use('*', cors());

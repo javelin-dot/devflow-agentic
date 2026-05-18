@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NavSidebar } from './components/NavSidebar';
 import { BoardView } from './views/BoardView';
@@ -15,14 +16,13 @@ import { ArchiveView } from './views/ArchiveView';
 import { SettingsView } from './views/SettingsView';
 import { LoginView } from './views/LoginView';
 import { TerminalPanel } from './views/TerminalPanel';
-import { RequirementListView } from './views/RequirementListView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastContainer } from './components/ui';
 import { OnboardingWizard } from './components/OnboardingWizard';
 import { ShortcutsHelpPanel } from './components/ShortcutsHelpPanel';
-import { RequirementDetailModal } from './components/RequirementDetailModal';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
+import { useRequirement } from './api/hooks';
 import { apiFetch } from './api/client';
 import type { Requirement } from '@devflow/shared';
 
@@ -30,49 +30,29 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 5000, refetchOnWindowFocus: false, retry: 1 } },
 });
 
-export type View = 'board' | 'req_detail' | 'workspace' | 'activity' | 'projects' | 'archive' | 'release' | 'quickpublish' | 'logs' | 'testing' | 'defects' | 'dashboard' | 'settings' | 'terminal';
+function WorkspacePage() {
+  const { reqId } = useParams<{ reqId: string }>();
+  const navigate = useNavigate();
+  const { data: req, isLoading } = useRequirement(reqId || '');
 
-function AppInner() {
+  if (!reqId) return <Navigate to="/board" replace />;
+  if (isLoading) return <div style={{ padding: 24, color: 'var(--text-tertiary)' }}>加载中...</div>;
+  if (!req) return <div style={{ padding: 24, color: 'var(--text-tertiary)' }}>需求不存在</div>;
+
+  return <ChatWorkspace req={req} onClose={() => navigate('/board')} />;
+}
+
+function AppLayout() {
   useTheme();
-  const [view, setView] = useState<View>('board');
-  const [selectedReq, setSelectedReq] = useState<Requirement | null>(null);
-  const [previewReq, setPreviewReq] = useState<Requirement | null>(null);
+  const [aiPanel, setAiPanel] = useState<{ open: boolean; req: Requirement | null }>({ open: false, req: null });
+  const [aiDragOver, setAiDragOver] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(() => !!localStorage.getItem('devflow_token'));
+  const navigate = useNavigate();
 
-  // Check onboarding status on mount
-  useEffect(() => {
-    if (!isLoggedIn) return;
-    apiFetch<Record<string, string>>('/settings')
-      .then(settings => {
-        if (settings.onboardingDone !== 'true') {
-          setShowOnboarding(true);
-        }
-      })
-      .catch(() => {
-        // If we can't reach settings, show onboarding
-        setShowOnboarding(true);
-      });
-  }, [isLoggedIn]);
+  useKeyboardShortcuts(() => setShowShortcutsHelp(true));
 
-  if (!isLoggedIn) {
-    return <LoginView onLogin={() => setIsLoggedIn(true)} />;
-  }
-
-  const handleNavigate = useCallback((v: string) => {
-    setView(v as View);
-    if (v !== 'workspace') setSelectedReq(null);
-    if (v !== 'req_detail') setPreviewReq(null);
-  }, []);
-
-  const handleHelp = useCallback(() => {
-    setShowShortcutsHelp(true);
-  }, []);
-
-  useKeyboardShortcuts(handleNavigate, handleHelp);
-
-  // Close shortcuts help on Escape
   useEffect(() => {
     function handleEsc(e: KeyboardEvent) {
       if (e.key === 'Escape') setShowShortcutsHelp(false);
@@ -81,98 +61,126 @@ function AppInner() {
     return () => window.removeEventListener('keydown', handleEsc);
   }, []);
 
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    apiFetch<Record<string, string>>('/settings')
+      .then(settings => {
+        if (settings.onboardingDone !== 'true') setShowOnboarding(true);
+      })
+      .catch(() => setShowOnboarding(true));
+  }, [isLoggedIn]);
+
+  if (!isLoggedIn) {
+    return (
+      <Routes>
+        <Route path="/login" element={<LoginView onLogin={() => setIsLoggedIn(true)} />} />
+        <Route path="*" element={<Navigate to="/login" replace />} />
+      </Routes>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', height: '100vh', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
-      <NavSidebar view={view} onViewChange={(v) => { setView(v as View); if (v !== 'workspace') setSelectedReq(null); if (v !== 'req_detail') setPreviewReq(null); }} />
+      <NavSidebar
+        aiPanelOpen={aiPanel.open}
+        onToggleAiPanel={() => setAiPanel(p => ({ ...p, open: !p.open }))}
+      />
       <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-        {view === 'board' && (
-          <ErrorBoundary viewName="看板">
-            <BoardView
-              onOpenReq={(req) => { setSelectedReq(req); setView('workspace'); }}
-              onPreviewReq={(req) => { setPreviewReq(req); setView('req_detail'); }}
-            />
-          </ErrorBoundary>
-        )}
-        {view === 'req_detail' && !previewReq && (
-          <ErrorBoundary viewName="需求列表">
-            <RequirementListView
-              onSelectReq={(req) => setPreviewReq(req)}
-            />
-          </ErrorBoundary>
-        )}
-        {view === 'req_detail' && previewReq && (
-          <ErrorBoundary viewName="需求详情">
-            <RequirementDetailModal
-              req={previewReq}
-              onClose={() => setPreviewReq(null)}
-              onOpenAI={(req) => { setPreviewReq(null); setSelectedReq(req); setView('workspace'); }}
-            />
-          </ErrorBoundary>
-        )}
-        {view === 'workspace' && selectedReq && (
-          <ErrorBoundary viewName="工作区">
-            <ChatWorkspace req={selectedReq} onClose={() => { setView('board'); setSelectedReq(null); }} />
-          </ErrorBoundary>
-        )}
-        {view === 'workspace' && !selectedReq && (
-          <div style={{ padding: 24, color: 'var(--text-tertiary)' }}>请先从看板选择一个需求</div>
-        )}
-        {view === 'activity' && (
-          <ErrorBoundary viewName="动态">
-            <ActivityView reqId={selectedReq?.id} />
-          </ErrorBoundary>
-        )}
-        {view === 'projects' && (
-          <ErrorBoundary viewName="项目">
-            <ProjectsView />
-          </ErrorBoundary>
-        )}
-        {view === 'archive' && (
-          <ErrorBoundary viewName="归档">
-            <ArchiveView />
-          </ErrorBoundary>
-        )}
-        {view === 'release' && (
-          <ErrorBoundary viewName="发布">
-            <ReleaseView />
-          </ErrorBoundary>
-        )}
-        {view === 'quickpublish' && (
-          <ErrorBoundary viewName="Jenkins">
-            <QuickPublishPanel />
-          </ErrorBoundary>
-        )}
-        {view === 'logs' && (
-          <ErrorBoundary viewName="日志">
-            <LogsView />
-          </ErrorBoundary>
-        )}
-        {view === 'testing' && (
-          <ErrorBoundary viewName="测试">
-            <TestDashboard reqId={selectedReq?.id} />
-          </ErrorBoundary>
-        )}
-        {view === 'defects' && (
-          <ErrorBoundary viewName="缺陷">
-            <DefectListPanel reqId={selectedReq?.id} />
-          </ErrorBoundary>
-        )}
-        {view === 'dashboard' && (
-          <ErrorBoundary viewName="仪表板">
-            <DashboardView />
-          </ErrorBoundary>
-        )}
-        {view === 'settings' && (
-          <ErrorBoundary viewName="设置">
-            <SettingsView onRerunOnboarding={() => setShowOnboarding(true)} />
-          </ErrorBoundary>
-        )}
-        {view === 'terminal' && (
-          <ErrorBoundary viewName="终端">
-            <TerminalPanel />
-          </ErrorBoundary>
-        )}
+        <Routes>
+          <Route path="/" element={<Navigate to="/board" replace />} />
+          <Route path="/board" element={<ErrorBoundary viewName="需求管理"><BoardView onOpenReq={(req) => setAiPanel({ open: true, req })} /></ErrorBoundary>} />
+          <Route path="/workspace/:reqId" element={<ErrorBoundary viewName="工作区"><WorkspacePage /></ErrorBoundary>} />
+          <Route path="/activity" element={<ErrorBoundary viewName="动态"><ActivityView /></ErrorBoundary>} />
+          <Route path="/projects" element={<ErrorBoundary viewName="项目"><ProjectsView /></ErrorBoundary>} />
+          <Route path="/archive" element={<ErrorBoundary viewName="归档"><ArchiveView /></ErrorBoundary>} />
+          <Route path="/release" element={<ErrorBoundary viewName="发布"><ReleaseView /></ErrorBoundary>} />
+          <Route path="/quickpublish" element={<ErrorBoundary viewName="Jenkins"><QuickPublishPanel /></ErrorBoundary>} />
+          <Route path="/logs" element={<ErrorBoundary viewName="日志"><LogsView /></ErrorBoundary>} />
+          <Route path="/testing" element={<ErrorBoundary viewName="测试"><TestDashboard /></ErrorBoundary>} />
+          <Route path="/defects" element={<ErrorBoundary viewName="缺陷"><DefectListPanel /></ErrorBoundary>} />
+          <Route path="/dashboard" element={<ErrorBoundary viewName="仪表板"><DashboardView /></ErrorBoundary>} />
+          <Route path="/settings" element={<ErrorBoundary viewName="设置"><SettingsView onRerunOnboarding={() => setShowOnboarding(true)} /></ErrorBoundary>} />
+          <Route path="/terminal" element={<ErrorBoundary viewName="终端"><TerminalPanel /></ErrorBoundary>} />
+          <Route path="/login" element={<Navigate to="/" replace />} />
+        </Routes>
       </main>
+
+      {aiPanel.open && (
+        <div
+          onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setAiDragOver(true); }}
+          onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setAiDragOver(false); }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setAiDragOver(false);
+            try {
+              const data = JSON.parse(e.dataTransfer.getData('application/json')) as { req?: Requirement };
+              if (data.req) setAiPanel({ open: true, req: data.req });
+            } catch { /* ignore */ }
+          }}
+          style={{
+            position: 'fixed', right: 0, top: 0, bottom: 0, width: 460, zIndex: 500,
+            boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
+            borderLeft: aiDragOver ? '2px solid #00a8a8' : '1px solid #EAECF0',
+            background: aiDragOver ? 'rgba(0,168,168,0.04)' : 'var(--bg-primary)',
+            display: 'flex', flexDirection: 'column',
+            transition: 'border-color 0.15s, background 0.15s',
+          }}
+        >
+          {aiPanel.req ? (
+            <ChatWorkspace
+              req={aiPanel.req}
+              onClose={() => setAiPanel({ open: false, req: null })}
+              panelMode
+            />
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              <div style={{
+                height: 44, flexShrink: 0, borderBottom: '1px solid var(--border-default)',
+                background: 'var(--bg-secondary)',
+                display: 'flex', alignItems: 'center', padding: '0 16px', gap: 8,
+                justifyContent: 'space-between',
+              }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>研发助手</span>
+                <button
+                  onClick={() => setAiPanel({ open: false, req: null })}
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', padding: 4, borderRadius: 4 }}
+                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)'; }}
+                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                >
+                  ✕
+                </button>
+              </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32 }}>
+                {aiDragOver ? (
+                  <div style={{
+                    width: '100%', maxWidth: 320,
+                    border: '2px dashed #00a8a8', borderRadius: 12,
+                    padding: '32px 24px', textAlign: 'center',
+                    background: 'rgba(0,168,168,0.06)',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+                  }}>
+                    <div style={{ fontSize: 28 }}>📥</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: '#00a8a8' }}>松开以加载需求</div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{
+                      width: '100%', maxWidth: 320,
+                      border: '1.5px dashed #D0D5DD', borderRadius: 12,
+                      padding: '24px 20px', textAlign: 'center',
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+                    }}>
+                      <div style={{ fontSize: 24 }}>↙</div>
+                      <div style={{ fontSize: 13, fontWeight: 500, color: '#6B7280' }}>将需求卡片拖拽到此处</div>
+                      <div style={{ fontSize: 11, color: '#98A2B3' }}>或右键卡片 → 研发助手</div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {showOnboarding && (
         <OnboardingWizard onComplete={() => setShowOnboarding(false)} />
@@ -187,8 +195,10 @@ function AppInner() {
 
 export function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <AppInner />
-    </QueryClientProvider>
+    <BrowserRouter>
+      <QueryClientProvider client={queryClient}>
+        <AppLayout />
+      </QueryClientProvider>
+    </BrowserRouter>
   );
 }

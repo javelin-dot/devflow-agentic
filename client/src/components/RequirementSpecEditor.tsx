@@ -27,6 +27,12 @@ export function RequirementSpecEditor({ reqId, readonly }: RequirementSpecEditor
         body: JSON.stringify({ reqId, agent: 'claude-api' }),
       });
 
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => 'Unknown error');
+        setGenLog(`请求失败: HTTP ${resp.status} ${text.slice(0, 200)}`);
+        return;
+      }
+
       const reader = resp.body!.getReader();
       const dec = new TextDecoder();
       let buf = '';
@@ -46,10 +52,14 @@ export function RequirementSpecEditor({ reqId, readonly }: RequirementSpecEditor
               setGenLog(prev => prev + evt.entry.content);
             } else if (evt.type === 'done') {
               setGenLog('生成完成');
+            } else if (evt.type === 'error') {
+              setGenLog(`生成失败: ${evt.message}`);
             }
           } catch { /* ignore */ }
         }
       }
+    } catch (err) {
+      setGenLog(`请求异常: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setGenerating(false);
     }

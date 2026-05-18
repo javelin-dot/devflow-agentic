@@ -25,6 +25,14 @@ export function useRequirements(filters?: RequirementFilters) {
   });
 }
 
+export function useRequirement(id: string) {
+  return useQuery<Requirement>({
+    queryKey: ['requirement', id],
+    queryFn: () => apiFetch<Requirement>(`/requirements/${id}`),
+    enabled: !!id,
+  });
+}
+
 export function useCreateRequirement() {
   const qc = useQueryClient();
   return useMutation<Requirement, Error, Partial<Requirement> & { title: string }>({
@@ -480,18 +488,29 @@ export function useArchivedRequirements() {
 }
 
 // ===== Settings hooks =====
+export interface AiDefaultConfig {
+  apiKey: string | null;
+  rawKeyExists: boolean;
+  baseUrl: string | null;
+  model: string | null;
+}
+
+export interface SettingsData extends Record<string, string> {
+  aiDefaultConfig?: AiDefaultConfig;
+}
+
 export function useSettings() {
-  return useQuery<Record<string, string>>({
+  return useQuery<SettingsData>({
     queryKey: ['settings'],
-    queryFn: () => apiFetch<Record<string, string>>('/settings'),
+    queryFn: () => apiFetch<SettingsData>('/settings'),
     staleTime: 10_000,
   });
 }
 
 export function useUpdateSettings() {
   const qc = useQueryClient();
-  return useMutation<Record<string, string>, Error, Record<string, string>>({
-    mutationFn: (patch) => apiFetch<Record<string, string>>('/settings', {
+  return useMutation<SettingsData, Error, Record<string, string>>({
+    mutationFn: (patch) => apiFetch<SettingsData>('/settings', {
       method: 'PUT',
       body: JSON.stringify(patch),
     }),

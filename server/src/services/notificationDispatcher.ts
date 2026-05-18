@@ -142,10 +142,11 @@ class NotificationDispatcher extends EventEmitter {
 
   // Get unread count for a user
   getUnreadCount(userId?: string): number {
-    const sql = userId
-      ? 'SELECT COUNT(*) as c FROM notifications WHERE user_id=? AND read_at IS NULL'
-      : 'SELECT COUNT(*) as c FROM notifications WHERE read_at IS NULL';
-    const row = db.prepare(sql).get(userId) as { c: number } | undefined;
+    if (userId) {
+      const row = db.prepare('SELECT COUNT(*) as c FROM notifications WHERE user_id=? AND read_at IS NULL').get(userId) as { c: number } | undefined;
+      return row?.c ?? 0;
+    }
+    const row = db.prepare('SELECT COUNT(*) as c FROM notifications WHERE read_at IS NULL').get() as { c: number } | undefined;
     return row?.c ?? 0;
   }
 

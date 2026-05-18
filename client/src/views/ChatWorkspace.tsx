@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Check, X, Pencil, Plus, FileText, BookOpen, ListChecks, GitBranch, ArrowUp, Sparkles, ChevronRight, Info } from 'lucide-react';
+import { Check, X, Pencil, Plus, FileText, BookOpen, ListChecks, GitBranch, ArrowUp, Sparkles, ChevronRight, Info, Bot } from 'lucide-react';
 import { UiSelect } from '../components/ui';
 import { useSessions, useCreateSession, usePatchSession, useDeleteSession, useMessages, useAgentAvailability, useSettings, useAttachmentsV2, useDeleteMessage, useDeleteMessages } from '../api/hooks';
 import { AttachmentsPanel } from '../components/AttachmentsPanel';
@@ -12,20 +12,23 @@ import { DesignSpecEditor } from '../components/DesignSpecEditor';
 
 interface EntryRowProps {
   msg: ChatMessage;
-  sessionId: string;
   selectMode?: boolean;
   selected?: boolean;
   onSelect?: () => void;
   onDelete?: () => void;
+  onApprove?: () => Promise<void>;
+  onReject?: () => Promise<void>;
 }
 
-function EntryRow({ msg, sessionId, selectMode, selected, onDelete }: EntryRowProps) {
+function EntryRow({ msg, selectMode, selected, onDelete, onApprove, onReject }: EntryRowProps) {
   const isUser = msg.role === 'user';
   const isToolUse = msg.entryType === 'tool_use';
   const isThinking = msg.entryType === 'thinking';
   const isPlan = msg.entryType === 'plan';
   const isTodo = msg.entryType === 'todo_update';
   const [hover, setHover] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [approving, setApproving] = useState<'approve' | 'reject' | null>(null);
 
   const label = isUser ? '用户' : isThinking ? '思考' : isToolUse ? '工具' : isPlan ? '计划' : isTodo ? '待办' : 'Agent';
   const labelColor = isUser ? 'var(--accent-blue)' : isThinking ? 'var(--accent-orange)' : isToolUse ? 'var(--accent-blue)' : isPlan ? 'var(--accent-purple)' : isTodo ? 'var(--accent-green)' : 'var(--text-secondary)';
@@ -122,16 +125,24 @@ function EntryRow({ msg, sessionId, selectMode, selected, onDelete }: EntryRowPr
           <span style={{ fontSize: 10, color: 'var(--accent-red)' }}>失败</span>
         )}
         {!selectMode && hover && onDelete && (
-          <button
-            onClick={onDelete}
-            title="删除"
-            style={{
-              marginLeft: 'auto', fontSize: 10, color: 'var(--accent-red)', background: 'transparent',
-              border: 'none', cursor: 'pointer', padding: '2px 4px',
-            }}
-          >
-            删除
-          </button>
+          deleteConfirm ? (
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
+              <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>确认删除？</span>
+              <button
+                onClick={() => { onDelete(); setDeleteConfirm(false); }}
+                style={{ fontSize: 10, color: 'var(--accent-red)', background: 'var(--diff-del-bg)', border: '1px solid var(--accent-red-44)', borderRadius: 3, padding: '1px 6px', cursor: 'pointer' }}
+              >确认</button>
+              <button
+                onClick={() => setDeleteConfirm(false)}
+                style={{ fontSize: 10, color: 'var(--text-secondary)', background: 'transparent', border: '1px solid var(--border-default)', borderRadius: 3, padding: '1px 6px', cursor: 'pointer' }}
+              >取消</button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setDeleteConfirm(true)}
+              style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--accent-red)', background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px 4px' }}
+            >删除</button>
+          )
         )}
       </div>
       <div style={{ fontSize: 14, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: isToolUse ? 'monospace' : 'inherit', lineHeight: 1.6 }}>
@@ -140,16 +151,18 @@ function EntryRow({ msg, sessionId, selectMode, selected, onDelete }: EntryRowPr
       {msg.status === 'pending' && isToolUse && (
         <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
           <button
-            onClick={() => apiFetch(`/agent/permission/${sessionId}/${msg.id}/approve`, { method: 'POST' })}
-            style={{ padding: '4px 12px', background: 'var(--diff-add-bg)', border: '1px solid var(--accent-green-44)', borderRadius: 4, color: 'var(--accent-green)', cursor: 'pointer', fontSize: 12 }}
+            onClick={async () => { setApproving('approve'); await onApprove?.(); setApproving(null); }}
+            disabled={approving !== null}
+            style={{ padding: '4px 12px', background: approving === 'approve' ? 'var(--bg-disabled)' : 'var(--diff-add-bg)', border: '1px solid var(--accent-green-44)', borderRadius: 4, color: approving === 'approve' ? 'var(--text-tertiary)' : 'var(--accent-green)', cursor: approving !== null ? 'not-allowed' : 'pointer', fontSize: 12 }}
           >
-            Approve
+            {approving === 'approve' ? '处理中...' : 'Approve'}
           </button>
           <button
-            onClick={() => apiFetch(`/agent/permission/${sessionId}/${msg.id}/reject`, { method: 'POST' })}
-            style={{ padding: '4px 12px', background: 'var(--diff-del-bg)', border: '1px solid var(--accent-red-44)', borderRadius: 4, color: 'var(--accent-red)', cursor: 'pointer', fontSize: 12 }}
+            onClick={async () => { setApproving('reject'); await onReject?.(); setApproving(null); }}
+            disabled={approving !== null}
+            style={{ padding: '4px 12px', background: approving === 'reject' ? 'var(--bg-disabled)' : 'var(--diff-del-bg)', border: '1px solid var(--accent-red-44)', borderRadius: 4, color: approving === 'reject' ? 'var(--text-tertiary)' : 'var(--accent-red)', cursor: approving !== null ? 'not-allowed' : 'pointer', fontSize: 12 }}
           >
-            Reject
+            {approving === 'reject' ? '处理中...' : 'Reject'}
           </button>
         </div>
       )}
@@ -200,6 +213,7 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const deleteMsg = useDeleteMessage();
   const deleteMsgs = useDeleteMessages();
 
@@ -246,17 +260,32 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
   };
 
   const handleDeleteSingle = (id: string) => {
-    if (!confirm('确定删除这条消息？')) return;
     deleteMsg.mutate({ sessionId: session.id, messageId: id });
   };
 
   const handleDeleteSelected = () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`确定删除选中的 ${selectedIds.size} 条消息？`)) return;
     deleteMsgs.mutate(
       { sessionId: session.id, ids: Array.from(selectedIds) },
       { onSuccess: () => { setSelectMode(false); setSelectedIds(new Set()); } }
     );
+  };
+
+  const handleStop = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setRunning(false);
+    setLiveEntries([]);
+  };
+
+  const handleApprove = async (msgId: string) => {
+    await apiFetch(`/agent/permission/${session.id}/${msgId}/approve`, { method: 'POST' });
+    refetch();
+  };
+
+  const handleReject = async (msgId: string) => {
+    await apiFetch(`/agent/permission/${session.id}/${msgId}/reject`, { method: 'POST' });
+    refetch();
   };
 
   const toggleFile = (name: string) => {
@@ -269,6 +298,9 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
   };
 
   const runAgent = async (fullPrompt: string) => {
+    if (running) return;
+    const ac = new AbortController();
+    abortRef.current = ac;
     setRunning(true);
     setLiveEntries([]);
 
@@ -277,6 +309,7 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Actor': 'user' },
         body: JSON.stringify({ sessionId: session.id, agent: session.agent, prompt: fullPrompt }),
+        signal: ac.signal,
       });
 
       const reader = resp.body!.getReader();
@@ -326,8 +359,11 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
           }
         }
       }
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError') throw err;
     } finally {
       setRunning(false);
+      abortRef.current = null;
       setLiveEntries([]);
       refetch();
     }
@@ -341,16 +377,6 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoPrompt]);
-
-  const didAutoMode = useRef(false);
-  useEffect(() => {
-    if (didAutoMode.current || !initialMode || initialMode === 'chat' || running) return;
-    didAutoMode.current = true;
-    if (initialMode === 'spec') { setMode('chat'); runGenerateSpec(); }
-    else if (initialMode === 'design') { setMode('chat'); runGenerateDesign(); }
-    else if (initialMode === 'tasks') { setMode('chat'); runAgent('请查看并汇报当前需求的任务进度，包括各子任务的状态和完成情况。'); }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const sendMessage = async () => {
     if (!prompt.trim() || running) return;
@@ -390,6 +416,9 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
   const [mode, setMode] = useState<OutputMode>(initialMode ?? 'chat');
 
   const runGenerateSpec = async () => {
+    if (running) return;
+    const ac = new AbortController();
+    abortRef.current = ac;
     setRunning(true);
     const tempId = `gen-spec-${Date.now()}`;
     setLiveEntries([{
@@ -400,12 +429,24 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
       entryType: 'thinking',
       createdAt: new Date().toISOString(),
     }]);
+    let streamError = '';
+    let streamDone = false;
     try {
       const resp = await fetch('/api/specs/requirement/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reqId: req.id, agent: session.agent }),
+        signal: ac.signal,
       });
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => 'Unknown error');
+        setLiveEntries(prev => prev.map(e =>
+          e.id === tempId ? { ...e, content: `请求失败: HTTP ${resp.status} ${text.slice(0, 200)}` } : e
+        ));
+        return;
+      }
+
       const reader = resp.body!.getReader();
       const dec = new TextDecoder();
       let buf = '';
@@ -424,23 +465,43 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
               setLiveEntries(prev => prev.map(e =>
                 e.id === tempId ? { ...e, content: '正在生成需求 Spec...\n\n' + evt.entry.content } : e
               ));
+            } else if (evt.type === 'error') {
+              streamError = evt.message || '未知错误';
+              setLiveEntries(prev => prev.map(e =>
+                e.id === tempId ? { ...e, content: `生成失败: ${streamError}` } : e
+              ));
+            } else if (evt.type === 'done') {
+              streamDone = true;
+              setLiveEntries(prev => prev.map(e =>
+                e.id === tempId ? { ...e, content: '需求 Spec 生成完成 ✅\n\n您可以在右侧「需求 Spec」面板查看和编辑。' } : e
+              ));
             }
           } catch { /* ignore */ }
         }
       }
-      setLiveEntries(prev => prev.map(e =>
-        e.id === tempId ? { ...e, content: '需求 Spec 生成完成 ✅\n\n您可以在右侧「需求 Spec」面板查看和编辑。' } : e
-      ));
-    } catch {
-      setLiveEntries(prev => prev.map(e =>
-        e.id === tempId ? { ...e, content: '需求 Spec 生成失败 ❌' } : e
-      ));
+      if (!streamError && !streamDone) {
+        setLiveEntries(prev => prev.map(e =>
+          e.id === tempId ? { ...e, content: '生成未返回有效内容，请检查后端日志与 AI 配置。' } : e
+        ));
+      }
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        setLiveEntries(prev => prev.filter(e => e.id !== tempId));
+      } else {
+        setLiveEntries(prev => prev.map(e =>
+          e.id === tempId ? { ...e, content: `生成失败: ${err instanceof Error ? err.message : String(err)}` } : e
+        ));
+      }
     } finally {
       setRunning(false);
+      abortRef.current = null;
     }
   };
 
   const runGenerateDesign = async () => {
+    if (running) return;
+    const ac = new AbortController();
+    abortRef.current = ac;
     setRunning(true);
     const tempId = `gen-design-${Date.now()}`;
     setLiveEntries([{
@@ -451,12 +512,24 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
       entryType: 'thinking',
       createdAt: new Date().toISOString(),
     }]);
+    let streamError = '';
+    let streamDone = false;
     try {
       const resp = await fetch('/api/specs/design/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reqId: req.id, agent: session.agent }),
+        signal: ac.signal,
       });
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => 'Unknown error');
+        setLiveEntries(prev => prev.map(e =>
+          e.id === tempId ? { ...e, content: `请求失败: HTTP ${resp.status} ${text.slice(0, 200)}` } : e
+        ));
+        return;
+      }
+
       const reader = resp.body!.getReader();
       const dec = new TextDecoder();
       let buf = '';
@@ -475,19 +548,36 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
               setLiveEntries(prev => prev.map(e =>
                 e.id === tempId ? { ...e, content: '正在生成设计 Spec...\n\n' + evt.entry.content } : e
               ));
+            } else if (evt.type === 'error') {
+              streamError = evt.message || '未知错误';
+              setLiveEntries(prev => prev.map(e =>
+                e.id === tempId ? { ...e, content: `生成失败: ${streamError}` } : e
+              ));
+            } else if (evt.type === 'done') {
+              streamDone = true;
+              setLiveEntries(prev => prev.map(e =>
+                e.id === tempId ? { ...e, content: '设计 Spec 生成完成 ✅\n\n您可以在右侧「设计 Spec」面板查看和编辑。' } : e
+              ));
             }
           } catch { /* ignore */ }
         }
       }
-      setLiveEntries(prev => prev.map(e =>
-        e.id === tempId ? { ...e, content: '设计 Spec 生成完成 ✅\n\n您可以在右侧「设计 Spec」面板查看和编辑。' } : e
-      ));
-    } catch {
-      setLiveEntries(prev => prev.map(e =>
-        e.id === tempId ? { ...e, content: '设计 Spec 生成失败 ❌' } : e
-      ));
+      if (!streamError && !streamDone) {
+        setLiveEntries(prev => prev.map(e =>
+          e.id === tempId ? { ...e, content: '生成未返回有效内容，请检查后端日志与 AI 配置。' } : e
+        ));
+      }
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        setLiveEntries(prev => prev.filter(e => e.id !== tempId));
+      } else {
+        setLiveEntries(prev => prev.map(e =>
+          e.id === tempId ? { ...e, content: `设计 Spec 生成失败: ${err instanceof Error ? err.message : String(err)}` } : e
+        ));
+      }
     } finally {
       setRunning(false);
+      abortRef.current = null;
     }
   };
 
@@ -523,6 +613,14 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
         <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 14 }}>{session.title || session.agent}</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{session.agent}</span>
+          {running && (
+            <button
+              onClick={handleStop}
+              style={{ fontSize: 11, padding: '3px 10px', borderRadius: 4, border: '1px solid var(--accent-red-44)', background: 'var(--diff-del-bg)', color: 'var(--accent-red)', cursor: 'pointer' }}
+            >
+              停止
+            </button>
+          )}
           {selectMode ? (
             <>
               <button
@@ -566,11 +664,12 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
               <EntryRow
                 key={m.id}
                 msg={m}
-                sessionId={session.id}
                 selectMode={selectMode}
                 selected={isSelected}
                 onSelect={() => toggleSelect(m.id)}
                 onDelete={persistedIds.has(m.id) ? () => handleDeleteSingle(m.id) : undefined}
+                onApprove={() => handleApprove(m.id)}
+                onReject={() => handleReject(m.id)}
               />
             );
           })}
@@ -634,8 +733,8 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
             <textarea
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-              placeholder="输入指令... (Enter 发送, Shift+Enter 换行)"
+              onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSend(); } }}
+              placeholder="输入指令... (⌘/Ctrl+Enter 发送)"
               disabled={running}
               style={{
                 width: '100%', border: 'none', background: 'transparent', outline: 'none',
@@ -837,8 +936,8 @@ function EmptyGuide({ onSend, req }: { onSend: (prompt: string) => void; req: Re
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(prompt); setPrompt(''); } }}
-              placeholder="输入指令... (Enter 发送, Shift+Enter 换行)"
+              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSend(prompt); setPrompt(''); } }}
+              placeholder="输入指令... (⌘/Ctrl+Enter 发送)"
               style={{
                 width: '100%', border: 'none', background: 'transparent', outline: 'none',
                 color: 'var(--text-primary)', fontSize: 14, resize: 'none', minHeight: 48,
@@ -908,7 +1007,7 @@ const STAGE_AUTO_MODE: Partial<Record<string, OutputMode>> = {
   development: 'tasks',
 };
 
-export function ChatWorkspace({ req, onClose }: { req: Requirement; onClose: () => void }) {
+export function ChatWorkspace({ req, onClose, panelMode }: { req: Requirement; onClose: () => void; panelMode?: boolean }) {
   const { data: sessions = [], isSuccess: sessionsLoaded } = useSessions(req.id);
   const createSession = useCreateSession();
   const patchSession = usePatchSession();
@@ -992,66 +1091,97 @@ export function ChatWorkspace({ req, onClose }: { req: Requirement; onClose: () 
     );
   };
 
-  void onClose;
-
   const panelTitle = rightPanel === 'spec' ? '需求 Spec' : rightPanel === 'design' ? '设计 Spec' : rightPanel === 'tasks' ? '任务进度' : rightPanel === 'analysis' ? '分析方案' : '';
 
   return (
     <div style={{ display: 'flex', height: '100%', background: 'var(--bg-primary)', position: 'relative' }}>
-      {/* Sidebar: sessions list */}
-      <div style={{ width: 220, borderRight: '1px solid var(--border-default)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', marginBottom: 2 }}>
-              {req.title.slice(0, 20)}{req.title.length > 20 ? '…' : ''}
+      {/* Sidebar: sessions list — hidden in panelMode */}
+      {!panelMode && (
+        <div style={{ width: 220, borderRight: '1px solid var(--border-default)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)', marginBottom: 2 }}>
+                {req.title.slice(0, 20)}{req.title.length > 20 ? '…' : ''}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Sessions</div>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>Sessions</div>
+            <button
+              onClick={() => {
+                setNewTitle(`${req.id} ${req.title}`);
+                setShowNewPanel(true);
+              }}
+              title="新建会话"
+              style={{
+                width: 28, height: 28, borderRadius: '50%', border: '1px solid var(--border-default)',
+                background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Plus size={14} />
+            </button>
           </div>
-          <button
-            onClick={() => {
-              setNewTitle(`${req.id} ${req.title}`);
-              setShowNewPanel(true);
-            }}
-            title="新建会话"
-            style={{
-              width: 28, height: 28, borderRadius: '50%', border: '1px solid var(--border-default)',
-              background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            <Plus size={14} />
-          </button>
-        </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-          {sessions.map(s => (
-            <SessionItem
-              key={s.id}
-              session={s}
-              active={activeSession?.id === s.id}
-              renaming={renamingId === s.id}
-              renameValue={renameValue}
-              onRenameValueChange={setRenameValue}
-              onClick={() => { if (renamingId !== s.id) { setActiveSession(s); } }}
-              onStartRename={() => { setRenamingId(s.id); setRenameValue(s.title || s.agent); }}
-              onConfirmRename={() => {
-                const title = renameValue.trim();
-                if (title) patchSession.mutate({ id: s.id, reqId: req.id, patch: { title } });
-                setRenamingId(null);
-              }}
-              onCancelRename={() => setRenamingId(null)}
-              onDelete={() => {
-                if (!confirm(`确定删除会话「${s.title || s.agent}」？`)) return;
-                if (activeSession?.id === s.id) setActiveSession(null);
-                deleteSession.mutate({ id: s.id, reqId: req.id });
-              }}
-            />
-          ))}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
+            {sessions.map(s => (
+              <SessionItem
+                key={s.id}
+                session={s}
+                active={activeSession?.id === s.id}
+                renaming={renamingId === s.id}
+                renameValue={renameValue}
+                onRenameValueChange={setRenameValue}
+                onClick={() => { if (renamingId !== s.id) { setActiveSession(s); } }}
+                onStartRename={() => { setRenamingId(s.id); setRenameValue(s.title || s.agent); }}
+                onConfirmRename={() => {
+                  const title = renameValue.trim();
+                  if (title) patchSession.mutate({ id: s.id, reqId: req.id, patch: { title } });
+                  setRenamingId(null);
+                }}
+                onCancelRename={() => setRenamingId(null)}
+                onDelete={() => {
+                  if (!confirm(`确定删除会话「${s.title || s.agent}」？`)) return;
+                  if (activeSession?.id === s.id) setActiveSession(null);
+                  deleteSession.mutate({ id: s.id, reqId: req.id });
+                }}
+              />
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Main area */}
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+        {/* Panel mode compact header */}
+        {panelMode && (
+          <div style={{
+            height: 44, flexShrink: 0,
+            background: 'var(--bg-secondary)',
+            borderBottom: '1px solid var(--border-default)',
+            display: 'flex', alignItems: 'center', padding: '0 12px', gap: 8,
+          }}>
+            <Bot size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>研发助手</span>
+            <div style={{ width: 1, height: 12, background: 'var(--border-default)', flexShrink: 0 }} />
+            <span style={{
+              fontSize: 12, color: 'var(--text-tertiary)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+            }}>
+              {req.title.slice(0, 24)}{req.title.length > 24 ? '…' : ''}
+            </span>
+            <button
+              onClick={onClose}
+              style={{
+                width: 26, height: 26, borderRadius: 6, border: 'none', cursor: 'pointer',
+                background: 'transparent', color: 'var(--text-tertiary)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-tertiary)'; }}
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
         {activeSession ? (
           <ChatPanel
             session={activeSession}

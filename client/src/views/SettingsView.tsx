@@ -555,7 +555,13 @@ export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => v
   const [proxyUrl, setProxyUrl] = useState('');
   const [proxySaved, setProxySaved] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [activeTab, setActiveTab] = useState<'ai' | 'repos' | 'users'>('ai');
+  const [activeTab, setActiveTab] = useState<'ai' | 'repos' | 'users' | 'general'>('ai');
+
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [aiBaseUrl, setAiBaseUrl] = useState('');
+  const [aiModel, setAiModel] = useState('');
+  const [showAiConfigForm, setShowAiConfigForm] = useState(false);
+  const [aiConfigSaved, setAiConfigSaved] = useState(false);
 
   // On load: populate providers from settings, then auto-add detected claude-code if missing
   useEffect(() => {
@@ -591,6 +597,15 @@ export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => v
     }
 
     setProviders(parsed);
+
+    // Init AI default config form from settings
+    if (settings.aiDefaultConfig) {
+      setAiBaseUrl(settings.aiDefaultConfig.baseUrl ?? '');
+      setAiModel(settings.aiDefaultConfig.model ?? '');
+      if (!settings.aiDefaultConfig.rawKeyExists) {
+        setShowAiConfigForm(true);
+      }
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings, availData]);
 
@@ -625,7 +640,7 @@ export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => v
   const isAdmin = me?.role === 'admin';
 
   return (
-    <div style={{ padding: 32, maxWidth: 800, color: 'var(--text-primary)' }}>
+    <div style={{ padding: 32, maxWidth: 800, color: 'var(--text-primary)', height: '100%', overflow: 'auto' }}>
       <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 24 }}>设置</div>
 
       {/* Tabs */}
@@ -663,10 +678,115 @@ export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => v
         >
           用户管理
         </button>
+        <button
+          onClick={() => setActiveTab('general')}
+          style={{
+            padding: '8px 16px', border: 'none', background: 'transparent',
+            color: activeTab === 'general' ? 'var(--accent-blue)' : 'var(--text-tertiary)', cursor: 'pointer',
+            fontSize: 14, fontWeight: 600,
+            borderBottom: activeTab === 'general' ? '2px solid var(--accent-blue)' : '2px solid transparent',
+          }}
+        >
+          通用
+        </button>
       </div>
 
       {activeTab === 'ai' && (
         <>
+          {/* ── 默认 AI 配置 ── */}
+          <div style={card}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>默认 AI 配置</div>
+              {!showAiConfigForm && (
+                <button onClick={() => setShowAiConfigForm(true)} style={btnSecondary}>编辑</button>
+              )}
+            </div>
+
+            {!showAiConfigForm ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)', width: 80 }}>API Key</span>
+                  <span style={{ fontSize: 13, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                    {settings?.aiDefaultConfig?.apiKey ?? '未配置'}
+                  </span>
+                  {settings?.aiDefaultConfig?.rawKeyExists ? (
+                    <span style={{ fontSize: 11, color: 'var(--accent-green)' }}>✓ 已加载</span>
+                  ) : (
+                    <span style={{ fontSize: 11, color: 'var(--accent-red)' }}>✗ 未配置</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)', width: 80 }}>Base URL</span>
+                  <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+                    {settings?.aiDefaultConfig?.baseUrl ?? '默认 https://api.anthropic.com'}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-tertiary)', width: 80 }}>Model</span>
+                  <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+                    {settings?.aiDefaultConfig?.model ?? '默认 claude-3-5-sonnet-latest'}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>API Key {settings?.aiDefaultConfig?.rawKeyExists ? '(留空则保持现有配置)' : ''}</div>
+                  <input
+                    type="password"
+                    value={aiApiKey}
+                    onChange={e => setAiApiKey(e.target.value)}
+                    placeholder="sk-..."
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>Base URL</div>
+                  <input
+                    value={aiBaseUrl}
+                    onChange={e => setAiBaseUrl(e.target.value)}
+                    placeholder="https://api.anthropic.com"
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 4 }}>Model</div>
+                  <input
+                    value={aiModel}
+                    onChange={e => setAiModel(e.target.value)}
+                    placeholder="claude-3-5-sonnet-latest"
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <button
+                    onClick={() => {
+                      const patch: Record<string, string> = {};
+                      if (aiApiKey.trim()) patch.anthropicApiKey = aiApiKey.trim();
+                      if (aiBaseUrl.trim()) patch.anthropicBaseUrl = aiBaseUrl.trim();
+                      else patch.anthropicBaseUrl = '';
+                      if (aiModel.trim()) patch.anthropicModel = aiModel.trim();
+                      else patch.anthropicModel = '';
+                      updateSettings.mutate(patch, {
+                        onSuccess: () => {
+                          setAiConfigSaved(true);
+                          setShowAiConfigForm(false);
+                          setAiApiKey('');
+                          setTimeout(() => setAiConfigSaved(false), 2000);
+                        },
+                      });
+                    }}
+                    disabled={updateSettings.isPending}
+                    style={btnPrimary}
+                  >
+                    {aiConfigSaved ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>已保存 <Check size={12} /></span> : '保存'}
+                  </button>
+                  <button onClick={() => { setShowAiConfigForm(false); setAiApiKey(''); }} style={btnSecondary}>取消</button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* ── AI 供应商 ── */}
           <div style={card}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -757,6 +877,19 @@ export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => v
             </div>
           </div>
 
+        </>
+      )}
+
+      {activeTab === 'repos' && <ReposTab />}
+
+      {activeTab === 'users' && (
+        <div style={card}>
+          <UserManagement />
+        </div>
+      )}
+
+      {activeTab === 'general' && (
+        <>
           {/* ── 外观 ── */}
           <div style={card}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>外观</div>
@@ -803,14 +936,6 @@ export function SettingsView({ onRerunOnboarding }: { onRerunOnboarding: () => v
             </button>
           </div>
         </>
-      )}
-
-      {activeTab === 'repos' && <ReposTab />}
-
-      {activeTab === 'users' && (
-        <div style={card}>
-          <UserManagement />
-        </div>
       )}
     </div>
   );

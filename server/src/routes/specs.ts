@@ -160,7 +160,7 @@ specsRouter.post('/requirement/generate', async (c) => {
 
     session.on('exit', (code: number | null) => {
       done = true;
-      if (code !== 0) errorMsg = 'Agent exited with error';
+      if (code !== 0 && !errorMsg) errorMsg = 'Agent exited with error';
     });
 
     session.on('error', (err: Error) => {
@@ -194,6 +194,8 @@ specsRouter.post('/requirement/generate', async (c) => {
       });
     } else if (errorMsg) {
       await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: errorMsg }) });
+    } else {
+      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: '生成内容为空，请检查 AI 配置或模型可用性' }) });
     }
   });
 });
@@ -232,7 +234,7 @@ specsRouter.post('/design/generate', async (c) => {
 
     session.on('exit', (code: number | null) => {
       done = true;
-      if (code !== 0) errorMsg = 'Agent exited with error';
+      if (code !== 0 && !errorMsg) errorMsg = 'Agent exited with error';
     });
 
     session.on('error', (err: Error) => {
@@ -275,6 +277,8 @@ specsRouter.post('/design/generate', async (c) => {
       });
     } else if (errorMsg) {
       await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: errorMsg }) });
+    } else {
+      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: '生成内容为空，请检查 AI 配置或模型可用性' }) });
     }
   });
 });

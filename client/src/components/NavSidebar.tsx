@@ -1,30 +1,31 @@
-import type { View } from '../App';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Kanban,
-  ClipboardList,
   Rocket,
   FileText,
   FlaskConical,
   AlertTriangle,
   LayoutDashboard,
   Settings,
-  Zap,
+  Bot,
 } from 'lucide-react';
 import { NotificationBell } from './NotificationBell';
 
 const ICON_SIZE = 18;
 
-const NAV_ITEMS: { key: View; label: string; icon: React.ReactNode }[] = [
-  { key: 'board', label: '看板', icon: <Kanban size={ICON_SIZE} /> },
-  { key: 'req_detail', label: '需求详情', icon: <ClipboardList size={ICON_SIZE} /> },
-  { key: 'testing', label: '测试', icon: <FlaskConical size={ICON_SIZE} /> },
-  { key: 'defects', label: '缺陷', icon: <AlertTriangle size={ICON_SIZE} /> },
-  { key: 'release', label: '发布', icon: <Rocket size={ICON_SIZE} /> },
-  { key: 'logs', label: '日志', icon: <FileText size={ICON_SIZE} /> },
-  { key: 'dashboard', label: '仪表', icon: <LayoutDashboard size={ICON_SIZE} /> },
+const NAV_ITEMS: { path: string; label: string; icon: React.ReactNode }[] = [
+  { path: '/board', label: '需求', icon: <Kanban size={ICON_SIZE} /> },
+  { path: '/testing', label: '测试', icon: <FlaskConical size={ICON_SIZE} /> },
+  { path: '/defects', label: '缺陷', icon: <AlertTriangle size={ICON_SIZE} /> },
+  { path: '/release', label: '发布', icon: <Rocket size={ICON_SIZE} /> },
+  { path: '/logs', label: '日志', icon: <FileText size={ICON_SIZE} /> },
+  { path: '/dashboard', label: '仪表', icon: <LayoutDashboard size={ICON_SIZE} /> },
 ];
 
-export function NavSidebar({ view, onViewChange }: { view: View; onViewChange: (v: string) => void }) {
+export function NavSidebar({ aiPanelOpen, onToggleAiPanel }: { aiPanelOpen?: boolean; onToggleAiPanel?: () => void }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+
   return (
     <nav
       style={{
@@ -39,51 +40,53 @@ export function NavSidebar({ view, onViewChange }: { view: View; onViewChange: (
       }}
     >
       {/* Logo */}
-      <div
+      <img
+        src="/logo.png"
+        alt="DevFlow"
         style={{
           width: 36,
           height: 36,
           borderRadius: 10,
-          background: 'linear-gradient(135deg, var(--accent-blue), var(--accent-cyan))',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: '0 2px 8px var(--accent-blue-22)',
           marginBottom: 20,
+          objectFit: 'cover',
         }}
-      >
-        <Zap size={20} color="#fff" strokeWidth={2.5} />
-      </div>
+      />
 
       {/* Main nav */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
         {NAV_ITEMS.map((item) => {
-          const isActive = view === item.key;
+          const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
           return (
             <button
-              key={item.key}
+              key={item.path}
               title={item.label}
-              onClick={() => onViewChange(item.key)}
+              onClick={() => navigate(item.path)}
               style={{
-                width: 40,
-                height: 40,
-                borderRadius: 10,
+                width: 38,
+                height: 38,
+                borderRadius: 9,
                 border: 'none',
                 cursor: 'pointer',
                 fontSize: 18,
-                background: isActive ? 'var(--bg-hover)' : 'transparent',
-                color: isActive ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                marginBottom: 4,
+                background: isActive ? 'rgba(0,168,168,0.1)' : 'transparent',
+                color: isActive ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+                marginBottom: 2,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 transition: 'all 0.15s',
               }}
               onMouseEnter={(e) => {
-                if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)';
+                if (!isActive) {
+                  (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)';
+                  (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)';
+                }
               }}
               onMouseLeave={(e) => {
-                if (!isActive) (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                if (!isActive) {
+                  (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+                  (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-tertiary)';
+                }
               }}
             >
               {item.icon}
@@ -97,26 +100,46 @@ export function NavSidebar({ view, onViewChange }: { view: View; onViewChange: (
       {/* Bottom actions */}
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
         <button
-          title="设置"
-          onClick={() => onViewChange('settings')}
+          title="研发助手"
+          onClick={onToggleAiPanel}
           style={{
-            width: 40,
-            height: 40,
-            borderRadius: 10,
+            width: 38, height: 38, borderRadius: 9, border: 'none', cursor: 'pointer',
+            background: aiPanelOpen ? 'rgba(0,168,168,0.1)' : 'transparent',
+            color: aiPanelOpen ? 'var(--accent-blue)' : 'var(--text-tertiary)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.15s',
+          }}
+          onMouseEnter={(e) => { if (!aiPanelOpen) { (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; } }}
+          onMouseLeave={(e) => { if (!aiPanelOpen) { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-tertiary)'; } }}
+        >
+          <Bot size={18} />
+        </button>
+        <button
+          title="设置"
+          onClick={() => navigate('/settings')}
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: 9,
             border: 'none',
             cursor: 'pointer',
-            background: view === 'settings' ? 'var(--bg-hover)' : 'transparent',
-            color: view === 'settings' ? 'var(--accent-blue)' : 'var(--text-secondary)',
+            background: location.pathname === '/settings' ? 'rgba(0,168,168,0.1)' : 'transparent',
+            color: location.pathname === '/settings' ? 'var(--accent-blue)' : 'var(--text-tertiary)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             transition: 'all 0.15s',
           }}
           onMouseEnter={(e) => {
-            if (view !== 'settings') (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)';
+            if (location.pathname !== '/settings') {
+              (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)';
+            }
           }}
           onMouseLeave={(e) => {
-            if (view !== 'settings') (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+            if (location.pathname !== '/settings') {
+              (e.currentTarget as HTMLButtonElement).style.background = 'transparent';
+              (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-tertiary)';
+            }
           }}
         >
           <Settings size={ICON_SIZE} />

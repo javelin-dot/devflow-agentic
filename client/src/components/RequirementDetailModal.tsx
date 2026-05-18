@@ -1,6 +1,11 @@
-import { useState, useEffect } from 'react';
-import { ChevronLeft, Save, Bot, ChevronRight, Archive, GitGraph, Check } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { ChevronLeft, Save, Bot, Archive, GitGraph, Check, ChevronDown } from 'lucide-react';
 import { STAGE_LABELS } from '@devflow/shared';
+
+const STAGE_CONFIG_LABELS: Record<string, string> = {
+  backlog: 'Backlog', analyzing: 'Analyzing', development: 'Dev',
+  uat: 'UAT', prerelease: 'Pre', released: 'Done',
+};
 import type { Requirement, Stage, Priority } from '@devflow/shared';
 import { usePatchRequirement, useProjects } from '../api/hooks';
 import { RequirementSpecEditor } from './RequirementSpecEditor';
@@ -35,7 +40,17 @@ function ProjectSelector({ req }: { req: Requirement }) {
   const { data: allProjects = [] } = useProjects();
   const patchReq = usePatchRequirement();
   const linkedNames = new Set(req.projects.map(p => p.project));
+  const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
 
   const toggle = (name: string) => {
     const isLinked = linkedNames.has(name);
@@ -49,58 +64,79 @@ function ProjectSelector({ req }: { req: Requirement }) {
     );
   };
 
+  const selected = req.projects.map(p => p.project);
+
   return (
-    <div style={{
-      borderRadius: 8, border: '1px solid var(--accent-orange-44, #F9731644)',
-      background: 'var(--diff-mod-bg, #F9731608)', padding: '12px 14px',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-        <GitGraph size={14} color="var(--accent-orange)" />
-        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent-orange)' }}>
-          需选择代码仓库（Standard 需求必须关联仓库后才能进入 Development）
-        </span>
-      </div>
-      {allProjects.length === 0 ? (
-        <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>暂无可用仓库，请先在「代码仓库」中配置</div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {allProjects.map(proj => {
-            const linked = linkedNames.has(proj.name);
-            return (
-              <button
-                key={proj.name}
-                onClick={() => !saving && toggle(proj.name)}
-                disabled={saving}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 8,
-                  padding: '7px 10px', borderRadius: 6, cursor: saving ? 'not-allowed' : 'pointer',
-                  border: `1px solid ${linked ? 'var(--accent-blue)' : 'var(--border-default)'}`,
-                  background: linked ? 'var(--accent-blue-10)' : 'var(--bg-secondary)',
-                  textAlign: 'left',
-                }}
-              >
-                <div style={{
-                  width: 16, height: 16, borderRadius: 4, flexShrink: 0,
-                  border: `2px solid ${linked ? 'var(--accent-blue)' : 'var(--border-default)'}`,
-                  background: linked ? 'var(--accent-blue)' : 'transparent',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                }}>
-                  {linked && <Check size={10} color="#fff" />}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: linked ? 'var(--accent-blue)' : 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {proj.name}
-                    {req.projects.find(p => p.project === proj.name)?.isPrimary && (
-                      <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--accent-green)', background: 'var(--diff-add-bg)', padding: '1px 5px', borderRadius: 3 }}>主仓库</span>
+    <div>
+      <label style={labelStyle}>关联代码仓库</label>
+      <div ref={ref} style={{ position: 'relative' }}>
+        <button
+          onClick={() => !saving && setOpen(o => !o)}
+          style={{
+            width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '7px 10px', borderRadius: 6, cursor: saving ? 'not-allowed' : 'pointer',
+            border: `1px solid ${open ? 'var(--accent-blue)' : 'var(--border-default)'}`,
+            background: 'var(--bg-secondary)', color: selected.length ? 'var(--text-primary)' : 'var(--text-tertiary)',
+            fontSize: 13, textAlign: 'left', boxSizing: 'border-box',
+          }}
+        >
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+            {selected.length === 0
+              ? '请选择代码仓库...'
+              : selected.join('、')}
+          </span>
+          <ChevronDown size={13} style={{ flexShrink: 0, marginLeft: 6, opacity: 0.5, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+        </button>
+
+        {open && (
+          <div style={{
+            position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 100,
+            background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
+            borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden',
+          }}>
+            {allProjects.length === 0 ? (
+              <div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--text-tertiary)' }}>
+                暂无可用仓库，请先在「代码仓库」中配置
+              </div>
+            ) : (
+              allProjects.map(proj => {
+                const linked = linkedNames.has(proj.name);
+                const isPrimary = req.projects.find(p => p.project === proj.name)?.isPrimary;
+                return (
+                  <button
+                    key={proj.name}
+                    onClick={() => toggle(proj.name)}
+                    style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                      padding: '8px 12px', cursor: 'pointer', textAlign: 'left',
+                      background: linked ? 'var(--accent-blue-10)' : 'transparent',
+                      border: 'none', borderBottom: '1px solid var(--border-default)',
+                      color: 'var(--text-primary)',
+                    }}
+                    onMouseEnter={(e) => { if (!linked) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)'; }}
+                    onMouseLeave={(e) => { if (!linked) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                  >
+                    <div style={{
+                      width: 15, height: 15, borderRadius: 3, flexShrink: 0,
+                      border: `2px solid ${linked ? 'var(--accent-blue)' : 'var(--border-default)'}`,
+                      background: linked ? 'var(--accent-blue)' : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {linked && <Check size={9} color="#fff" />}
+                    </div>
+                    <span style={{ fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: linked ? 'var(--accent-blue)' : 'var(--text-primary)' }}>
+                      {proj.name}
+                    </span>
+                    {isPrimary && (
+                      <span style={{ fontSize: 10, color: 'var(--accent-green)', background: 'var(--diff-add-bg)', padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>主</span>
                     )}
-                  </div>
-                  {proj.path && <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{proj.path}</div>}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      )}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -111,13 +147,13 @@ export function RequirementDetailModal({ req, onClose, onOpenAI }: Props) {
   const si = stageIndex(req.stage);
   const showDesign = si >= stageIndex('analyzing');
   const showTasks = si >= stageIndex('development');
-  const needsRepo = req.stage === 'analyzing' && req.kind === 'standard';
-
   const [title, setTitle] = useState(req.title);
   const [description, setDescription] = useState(req.description ?? '');
   const [notes, setNotes] = useState(req.notes ?? '');
   const [priority, setPriority] = useState<Priority>(req.priority);
   const [kind, setKind] = useState<'standard' | 'no_code'>(req.kind);
+
+  const showProjectSelector = kind === 'standard' && !isArchived;
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -179,47 +215,36 @@ export function RequirementDetailModal({ req, onClose, onOpenAI }: Props) {
           onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)'; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
         >
-          <ChevronLeft size={15} />需求列表
+          <ChevronLeft size={15} />返回
         </button>
 
         <div style={{ width: 1, height: 16, background: 'var(--border-default)' }} />
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, overflow: 'hidden' }}>
-          <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-tertiary)', background: 'var(--bg-tertiary)', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>
-            {req.id}
-          </span>
-          <ChevronRight size={12} color="var(--text-tertiary)" />
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {req.title}
-          </span>
-          {isArchived && (
-            <span style={{
-              display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
-              fontSize: 11, padding: '2px 8px', borderRadius: 6,
-              background: 'var(--bg-tertiary)', color: 'var(--text-tertiary)',
-              border: '1px solid var(--border-default)',
-            }}>
-              <Archive size={11} />已归档·只读
-            </span>
-          )}
-        </div>
+        <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--text-tertiary)', background: 'var(--bg-tertiary)', padding: '2px 6px', borderRadius: 4, flexShrink: 0 }}>
+          {req.id}
+        </span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+          {req.title}
+        </span>
 
-        {/* Stage pills */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
-          {STAGES.map((s, i) => (
-            <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-              <span style={{
-                fontSize: 10, padding: '2px 7px', borderRadius: 8, fontWeight: 500, whiteSpace: 'nowrap',
-                background: s === req.stage ? 'var(--accent-blue)' : i < si ? 'var(--diff-add-bg)' : 'var(--bg-tertiary)',
-                color: s === req.stage ? 'var(--text-inverse)' : i < si ? 'var(--accent-green)' : 'var(--text-tertiary)',
-                border: `1px solid ${s === req.stage ? 'transparent' : i < si ? 'var(--accent-green-44)' : 'var(--border-default)'}`,
-              }}>
-                {STAGE_LABELS[s]}
-              </span>
-              {i < STAGES.length - 1 && <ChevronRight size={9} color={i < si ? 'var(--accent-green)' : 'var(--border-default)'} />}
-            </div>
-          ))}
-        </div>
+        {/* Current stage badge */}
+        {isArchived ? (
+          <span style={{
+            display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0,
+            fontSize: 11, padding: '2px 8px', borderRadius: 6,
+            background: 'var(--bg-tertiary)', color: 'var(--text-tertiary)',
+            border: '1px solid var(--border-default)',
+          }}>
+            <Archive size={11} />已归档·只读
+          </span>
+        ) : (
+          <span style={{
+            fontSize: 11, padding: '2px 8px', borderRadius: 8, fontWeight: 500, flexShrink: 0,
+            background: 'var(--accent-blue)', color: 'var(--text-inverse)',
+          }}>
+            {STAGE_LABELS[req.stage]}
+          </span>
+        )}
 
         {!isArchived && (
           <button
@@ -232,9 +257,51 @@ export function RequirementDetailModal({ req, onClose, onOpenAI }: Props) {
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
           >
-            <Bot size={13} />AI 助理
+            <Bot size={13} />研发助手
           </button>
         )}
+      </div>
+
+      {/* Stage stepper bar */}
+      <div style={{
+        height: 36, flexShrink: 0, borderBottom: '1px solid var(--border-default)',
+        background: 'var(--bg-primary)',
+        display: 'flex', alignItems: 'center', padding: '0 16px',
+        position: 'relative',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', width: '100%', maxWidth: 560 }}>
+          {STAGES.map((s, i) => {
+            const isCurrent = s === req.stage;
+            const isPast = i < si;
+            return (
+              <div key={s} style={{ display: 'flex', alignItems: 'center', flex: i < STAGES.length - 1 ? 1 : 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                  <div style={{
+                    width: isCurrent ? 10 : isPast ? 7 : 7,
+                    height: isCurrent ? 10 : isPast ? 7 : 7,
+                    borderRadius: '50%',
+                    background: isCurrent ? 'var(--accent-blue)' : isPast ? 'var(--accent-green)' : 'transparent',
+                    border: `2px solid ${isCurrent ? 'var(--accent-blue)' : isPast ? 'var(--accent-green)' : 'var(--border-default)'}`,
+                    flexShrink: 0,
+                  }} />
+                  <span style={{
+                    fontSize: 10, whiteSpace: 'nowrap', lineHeight: 1,
+                    color: isCurrent ? 'var(--accent-blue)' : isPast ? 'var(--accent-green)' : 'var(--text-tertiary)',
+                    fontWeight: isCurrent ? 600 : 400,
+                  }}>
+                    {STAGE_CONFIG_LABELS[s]}
+                  </span>
+                </div>
+                {i < STAGES.length - 1 && (
+                  <div style={{
+                    flex: 1, height: 1, margin: '0 3px', marginBottom: 10,
+                    background: isPast ? 'var(--accent-green)' : 'var(--border-default)',
+                  }} />
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Body */}
@@ -242,14 +309,14 @@ export function RequirementDetailModal({ req, onClose, onOpenAI }: Props) {
 
         {/* Left: info */}
         <div style={{
-          width: 300, flexShrink: 0, borderRight: '1px solid var(--border-default)',
+          width: 260, flexShrink: 0, borderRight: '1px solid var(--border-default)',
           display: 'flex', flexDirection: 'column', overflow: 'hidden',
           opacity: isArchived ? 0.8 : 1,
         }}>
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-            {/* Repo selection (Analyzing + Standard only) */}
-            {needsRepo && !isArchived && <ProjectSelector req={req} />}
+            {/* Repo selection (Standard requirements, all stages) */}
+            {showProjectSelector && <ProjectSelector req={req} />}
 
             <div>
               <label style={labelStyle}>需求标题</label>
@@ -301,7 +368,7 @@ export function RequirementDetailModal({ req, onClose, onOpenAI }: Props) {
             <div>
               <label style={labelStyle}>需求描述</label>
               <textarea value={description} onChange={(e) => !isArchived && setDescription(e.target.value)}
-                readOnly={isArchived} rows={5} placeholder={isArchived ? '' : '描述需求背景、目标和验收条件...'}
+                readOnly={isArchived} rows={3} placeholder={isArchived ? '' : '描述需求背景、目标和验收条件...'}
                 style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5, cursor: isArchived ? 'default' : 'text' }}
                 onFocus={(e) => { if (!isArchived) (e.currentTarget as HTMLTextAreaElement).style.borderColor = 'var(--accent-blue)'; }}
                 onBlur={(e) => { (e.currentTarget as HTMLTextAreaElement).style.borderColor = 'var(--border-default)'; }}
@@ -311,7 +378,7 @@ export function RequirementDetailModal({ req, onClose, onOpenAI }: Props) {
             <div>
               <label style={labelStyle}>备注</label>
               <textarea value={notes} onChange={(e) => !isArchived && setNotes(e.target.value)}
-                readOnly={isArchived} rows={3} placeholder={isArchived ? '' : '补充说明、相关链接...'}
+                readOnly={isArchived} rows={2} placeholder={isArchived ? '' : '补充说明、相关链接...'}
                 style={{ ...inputStyle, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5, cursor: isArchived ? 'default' : 'text' }}
                 onFocus={(e) => { if (!isArchived) (e.currentTarget as HTMLTextAreaElement).style.borderColor = 'var(--accent-blue)'; }}
                 onBlur={(e) => { (e.currentTarget as HTMLTextAreaElement).style.borderColor = 'var(--border-default)'; }}
