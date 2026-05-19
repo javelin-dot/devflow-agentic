@@ -461,10 +461,15 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
           if (!line) continue;
           try {
             const evt = JSON.parse(line);
-            if (evt.type === 'entry' && evt.entry?.type === 'thinking') {
-              setLiveEntries(prev => prev.map(e =>
-                e.id === tempId ? { ...e, content: '正在生成需求 Spec...\n\n' + evt.entry.content } : e
-              ));
+            if (evt.type === 'entry' && (evt.entry?.type === 'thinking' || evt.entry?.type === 'assistant_message')) {
+              const chunk = evt.entry.content ?? '';
+              setLiveEntries(prev => prev.map(e => {
+                const prefix = '正在生成需求 Spec...\n\n';
+                const body = e.id === tempId && e.content.startsWith(prefix)
+                  ? e.content.slice(prefix.length) + chunk
+                  : chunk;
+                return e.id === tempId ? { ...e, content: prefix + body } : e;
+              }));
             } else if (evt.type === 'error') {
               streamError = evt.message || '未知错误';
               setLiveEntries(prev => prev.map(e =>
@@ -544,10 +549,15 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
           if (!line) continue;
           try {
             const evt = JSON.parse(line);
-            if (evt.type === 'entry' && evt.entry?.type === 'thinking') {
-              setLiveEntries(prev => prev.map(e =>
-                e.id === tempId ? { ...e, content: '正在生成设计 Spec...\n\n' + evt.entry.content } : e
-              ));
+            if (evt.type === 'entry' && (evt.entry?.type === 'thinking' || evt.entry?.type === 'assistant_message')) {
+              const chunk = evt.entry.content ?? '';
+              setLiveEntries(prev => prev.map(e => {
+                const prefix = '正在生成设计 Spec...\n\n';
+                const body = e.id === tempId && e.content.startsWith(prefix)
+                  ? e.content.slice(prefix.length) + chunk
+                  : chunk;
+                return e.id === tempId ? { ...e, content: prefix + body } : e;
+              }));
             } else if (evt.type === 'error') {
               streamError = evt.message || '未知错误';
               setLiveEntries(prev => prev.map(e =>
@@ -1033,7 +1043,13 @@ export function ChatWorkspace({ req, onClose, panelMode }: { req: Requirement; o
 
   const resolveAgent = (overrideAgent?: string) => {
     const settingsAgent = settings?.defaultAgent;
-    const fallbackAgent = availableAgents.includes('claude-api') ? 'claude-api' : availableAgents[0] ?? 'claude-code';
+    const fallbackAgent = avail?.defaultAgent && availableAgents.includes(avail.defaultAgent)
+      ? avail.defaultAgent
+      : availableAgents.includes('claude-code')
+        ? 'claude-code'
+        : availableAgents.includes('claude-api')
+          ? 'claude-api'
+          : availableAgents[0] ?? 'claude-code';
     const defaultAgent = (settingsAgent && availableAgents.includes(settingsAgent)) ? settingsAgent : fallbackAgent;
     return overrideAgent || newAgent || defaultAgent;
   };
@@ -1241,7 +1257,7 @@ export function ChatWorkspace({ req, onClose, panelMode }: { req: Requirement; o
                       value={newAgent}
                       onChange={setNewAgent}
                       options={[
-                        { value: '', label: `自动选择 (${availableAgents.includes('claude-api') ? 'claude-api' : availableAgents[0]})` },
+                        { value: '', label: `自动选择 (${avail?.defaultAgent && availableAgents.includes(avail.defaultAgent) ? avail.defaultAgent : availableAgents.includes('claude-code') ? 'claude-code' : availableAgents[0] ?? 'claude-code'})` },
                         ...availableAgents.map(a => ({
                           value: a,
                           label: `${a}${a === 'claude-api' ? ' (流式)' : a === 'claude-code' ? ' (非流式)' : ''}`,

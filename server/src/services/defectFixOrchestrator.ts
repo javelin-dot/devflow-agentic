@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
 import { db, newId } from '../db/index.js';
 import { gitService } from './git.js';
-import { ClaudeAPISession } from '../agents/ClaudeAPISession.js';
-import type { NormalizedEntry, Defect } from '@devflow/shared';
+import { createAgentProcess } from '../agents/SessionManager.js';
+import { resolveDefaultAgent } from '../agents/resolveDefaultAgent.js';
+import { runAgentUntilDone } from '../agents/agentRunner.js';
+import type { Defect } from '@devflow/shared';
 
 export interface FixResult {
   success: boolean;
@@ -12,7 +14,7 @@ export interface FixResult {
 }
 
 class DefectFixOrchestrator {
-  async run(defectId: string, _agent: string): Promise<FixResult> {
+  async run(defectId: string, agent?: string): Promise<FixResult> {
     const defect = db.prepare('SELECT * FROM defects WHERE id=?').get(defectId) as Record<string, unknown> | undefined;
     if (!defect) return { success: false, status: 'pending_confirm', reason: 'defect not found', log: '' };
 
@@ -51,32 +53,10 @@ class DefectFixOrchestrator {
     // Build prompt
     const prompt = this.buildPrompt(defect, req, subtask);
 
-    // Run AI session
     const sessionId = newId('ses');
-    const session = new ClaudeAPISession(sessionId, {});
-
-    const collected: string[] = [];
-    let done = false;
-    let errorMsg = '';
-
-    session.on('entry', (entry: NormalizedEntry) => {
-      if (entry.type === 'assistant_message') collected.push(entry.content);
-    });
-    session.on('exit', (code: number | null) => {
-      done = true;
-      if (code !== 0) errorMsg = 'Agent exited with error';
-    });
-    session.on('error', (err: Error) => {
-      done = true;
-      errorMsg = err.message;
-    });
-
-    session.send(prompt);
-
-    await new Promise<void>((resolve) => {
-      const iv = setInterval(() => { if (done) { clearInterval(iv); resolve(); } }, 200);
-      setTimeout(() => { clearInterval(iv); done = true; resolve(); }, 10 * 60 * 1000);
-    });
+    const chosen = agent ?? resolveDefaultAgent();
+    const session = createAgentProcess(chosen, sessionId, projectPath || undefined);
+    const { collected, errorMsg } = await runAgentUntilDone(session, prompt);
 
     if (errorMsg) {
       await this.rollback(projectPath, originalCommit);
@@ -151,7 +131,7 @@ class DefectFixOrchestrator {
       await fetch('http://localhost:4000/api/test-cases/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reqId, scope: 'smoke', agent: 'claude-api' }),
+        body: JSON.stringify({ reqId, scope: 'smoke' }),
       });
     } catch {
       // ignore auto-smoke failure

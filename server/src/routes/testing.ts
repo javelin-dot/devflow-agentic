@@ -6,7 +6,9 @@ import { testRunner, detectAdapter, checkCLIExists, getAdapterForTestType } from
 import { qualityGateService } from '../services/qualityGate.js';
 import { notificationDispatcher } from '../services/notificationDispatcher.js';
 import { defectFixOrchestrator } from '../services/defectFixOrchestrator.js';
-import { ClaudeAPISession } from '../agents/ClaudeAPISession.js';
+import { createAgentProcess } from '../agents/SessionManager.js';
+import { resolveDefaultAgent } from '../agents/resolveDefaultAgent.js';
+import { runAgentUntilDone } from '../agents/agentRunner.js';
 import { rbacGuard } from '../middleware/auth.js';
 import type { TestPlan, TestCase, TestRun, GateCheck, Defect, TestType, NormalizedEntry } from '@devflow/shared';
 
@@ -450,7 +452,7 @@ function saveGeneratedCases(reqId: string, cases: Array<Partial<TestCase>>, scop
 
 const GenerateSchema = z.object({
   reqId: z.string(),
-  agent: z.string().optional().default('claude-api'),
+  agent: z.string().optional(),
   scope: z.enum(['smoke', 'full']).optional().default('full'),
 });
 
@@ -462,41 +464,16 @@ testingRouter.post('/test-cases/generate', async (c) => {
 
   return streamSSE(c, async (stream) => {
     const sessionId = newId('ses');
-    const session = new ClaudeAPISession(sessionId, {});
-
-    const collected: string[] = [];
-    let done = false;
-    let errorMsg = '';
-
-    session.on('entry', (entry: NormalizedEntry) => {
-      void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
-      if (entry.type === 'assistant_message') {
-        collected.push(entry.content);
-      }
-    });
-
-    session.on('patch', (entryId: string, patch: Partial<NormalizedEntry>) => {
-      void stream.writeSSE({ data: JSON.stringify({ type: 'patch', entryId, patch }) });
-    });
-
-    session.on('exit', (code: number | null) => {
-      done = true;
-      if (code !== 0) errorMsg = 'Agent exited with error';
-    });
-
-    session.on('error', (err: Error) => {
-      done = true;
-      errorMsg = err.message;
-    });
-
+    const agent = body.agent ?? resolveDefaultAgent();
+    const session = createAgentProcess(agent, sessionId);
     const prompt = buildTestCasePrompt(body.reqId, body.scope);
-    session.send(prompt);
-
-    await new Promise<void>((resolve) => {
-      const iv = setInterval(() => {
-        if (done) { clearInterval(iv); resolve(); }
-      }, 200);
-      setTimeout(() => { clearInterval(iv); done = true; resolve(); }, 10 * 60 * 1000);
+    let { collected, errorMsg } = await runAgentUntilDone(session, prompt, {
+      onEntry: (entry) => {
+        void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
+      },
+      onPatch: (entryId, patch) => {
+        void stream.writeSSE({ data: JSON.stringify({ type: 'patch', entryId, patch }) });
+      },
     });
 
     if (!errorMsg && collected.length > 0) {
@@ -743,7 +720,7 @@ testingRouter.post('/defects/:id/assign-agent', async (c) => {
   const defect = db.prepare('SELECT * FROM defects WHERE id=?').get(id) as Record<string, unknown> | undefined;
   if (!defect) return c.json({ error: 'not found' }, 404);
 
-  const result = await defectFixOrchestrator.run(id, body.agent ?? 'claude-api');
+  const result = await defectFixOrchestrator.run(id, body.agent);
   return c.json(result);
 });
 
@@ -794,37 +771,14 @@ testingRouter.post('/tdd-loop/run', async (c) => {
 
     // Phase 1: Plan — generate test cases
     const sessionId = newId('ses');
-    const session = new ClaudeAPISession(sessionId, {});
-
-    const collected: string[] = [];
-    let genDone = false;
-    let genError = '';
-
-    session.on('entry', (entry: NormalizedEntry) => {
-      if (entry.type === 'assistant_message') {
-        collected.push(entry.content);
-        void stream.writeSSE({ data: JSON.stringify({ type: 'chunk', content: entry.content }) });
-      }
-    });
-
-    session.on('exit', (code: number | null) => {
-      genDone = true;
-      if (code !== 0) genError = 'Agent exited with error';
-    });
-
-    session.on('error', (err: Error) => {
-      genDone = true;
-      genError = err.message;
-    });
-
+    const session = createAgentProcess(resolveDefaultAgent(), sessionId);
     const prompt = buildTestCasePrompt(body.reqId, body.scope ?? 'full');
-    session.send(prompt);
-
-    await new Promise<void>((resolve) => {
-      const iv = setInterval(() => {
-        if (genDone) { clearInterval(iv); resolve(); }
-      }, 200);
-      setTimeout(() => { clearInterval(iv); genDone = true; resolve(); }, 10 * 60 * 1000);
+    const { collected, errorMsg: genError } = await runAgentUntilDone(session, prompt, {
+      onEntry: (entry) => {
+        if (entry.type === 'assistant_message') {
+          void stream.writeSSE({ data: JSON.stringify({ type: 'chunk', content: entry.content }) });
+        }
+      },
     });
 
     if (genError) {

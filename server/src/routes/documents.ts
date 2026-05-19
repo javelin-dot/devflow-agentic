@@ -315,7 +315,7 @@ documentsRouter.post('/:id/approve', rbacGuard('pm', 'admin'), async (c) => {
       const resp = await fetch('http://localhost:4000/api/test-cases/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reqId: docRow.req_id as string, scope: 'smoke', agent: 'claude-api' }),
+        body: JSON.stringify({ reqId: docRow.req_id as string, scope: 'smoke' }),
       });
       if (!resp.ok) {
         console.error('[auto-smoke] trigger failed:', resp.status);

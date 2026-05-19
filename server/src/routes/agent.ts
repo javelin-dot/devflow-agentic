@@ -3,6 +3,7 @@ import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import { db } from '../db/index.js';
 import { sessionManager } from '../agents/SessionManager.js';
+import { resolveDefaultAgent } from '../agents/resolveDefaultAgent.js';
 import { execSync } from 'node:child_process';
 
 export const agentRouter = new Hono();
@@ -78,8 +79,9 @@ agentRouter.get('/availability', (c) => {
       agents[cli === 'claude' ? 'claude-code' : cli] = { present: false };
     }
   }
-  agents['claude-api'] = { present: !!process.env.ANTHROPIC_API_KEY };
-  return c.json({ agents });
+  agents['claude-api'] = { present: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) };
+  const defaultAgent = resolveDefaultAgent();
+  return c.json({ agents, defaultAgent });
 });
 
 // GET /agent/status

@@ -2,7 +2,9 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import { db, newId } from '../db/index.js';
-import { ClaudeAPISession } from '../agents/ClaudeAPISession.js';
+import { createAgentProcess } from '../agents/SessionManager.js';
+import { resolveDefaultAgent } from '../agents/resolveDefaultAgent.js';
+import { runAgentUntilDone } from '../agents/agentRunner.js';
 import { notificationDispatcher } from '../services/notificationDispatcher.js';
 import type { NormalizedEntry } from '@devflow/shared';
 
@@ -129,7 +131,7 @@ function saveDocument(
 // POST /specs/requirement/generate — SSE
 const ReqGenSchema = z.object({
   reqId: z.string(),
-  agent: z.string().optional().default('claude-api'),
+  agent: z.string().optional(),
   contextRefs: z.array(z.object({ type: z.enum(['requirement', 'attachment']), id: z.string() })).optional().default([]),
 });
 
@@ -141,42 +143,16 @@ specsRouter.post('/requirement/generate', async (c) => {
 
   return streamSSE(c, async (stream) => {
     const sessionId = newId('ses');
-    const session = new ClaudeAPISession(sessionId, {});
-
-    const collected: string[] = [];
-    let done = false;
-    let errorMsg = '';
-
-    session.on('entry', (entry: NormalizedEntry) => {
-      void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
-      if (entry.type === 'assistant_message') {
-        collected.push(entry.content);
-      }
-    });
-
-    session.on('patch', (entryId: string, patch: Partial<NormalizedEntry>) => {
-      void stream.writeSSE({ data: JSON.stringify({ type: 'patch', entryId, patch }) });
-    });
-
-    session.on('exit', (code: number | null) => {
-      done = true;
-      if (code !== 0 && !errorMsg) errorMsg = 'Agent exited with error';
-    });
-
-    session.on('error', (err: Error) => {
-      done = true;
-      errorMsg = err.message;
-    });
-
+    const agent = body.agent ?? resolveDefaultAgent();
+    const session = createAgentProcess(agent, sessionId);
     const prompt = buildRequirementPrompt(body.reqId);
-    session.send(prompt);
-
-    // Wait for completion
-    await new Promise<void>((resolve) => {
-      const iv = setInterval(() => {
-        if (done) { clearInterval(iv); resolve(); }
-      }, 200);
-      setTimeout(() => { clearInterval(iv); done = true; resolve(); }, 10 * 60 * 1000);
+    const { collected, errorMsg } = await runAgentUntilDone(session, prompt, {
+      onEntry: (entry) => {
+        void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
+      },
+      onPatch: (entryId, patch) => {
+        void stream.writeSSE({ data: JSON.stringify({ type: 'patch', entryId, patch }) });
+      },
     });
 
     if (!errorMsg && collected.length > 0) {
@@ -203,7 +179,7 @@ specsRouter.post('/requirement/generate', async (c) => {
 // POST /specs/design/generate — SSE
 const DesignGenSchema = z.object({
   reqId: z.string(),
-  agent: z.string().optional().default('claude-api'),
+  agent: z.string().optional(),
   reqDocId: z.string().optional(),
 });
 
@@ -215,42 +191,16 @@ specsRouter.post('/design/generate', async (c) => {
 
   return streamSSE(c, async (stream) => {
     const sessionId = newId('ses');
-    const session = new ClaudeAPISession(sessionId, {});
-
-    const collected: string[] = [];
-    let done = false;
-    let errorMsg = '';
-
-    session.on('entry', (entry: NormalizedEntry) => {
-      void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
-      if (entry.type === 'assistant_message') {
-        collected.push(entry.content);
-      }
-    });
-
-    session.on('patch', (entryId: string, patch: Partial<NormalizedEntry>) => {
-      void stream.writeSSE({ data: JSON.stringify({ type: 'patch', entryId, patch }) });
-    });
-
-    session.on('exit', (code: number | null) => {
-      done = true;
-      if (code !== 0 && !errorMsg) errorMsg = 'Agent exited with error';
-    });
-
-    session.on('error', (err: Error) => {
-      done = true;
-      errorMsg = err.message;
-    });
-
+    const agent = body.agent ?? resolveDefaultAgent();
+    const session = createAgentProcess(agent, sessionId);
     const prompt = buildDesignPrompt(body.reqId, body.reqDocId);
-    session.send(prompt);
-
-    // Wait for completion
-    await new Promise<void>((resolve) => {
-      const iv = setInterval(() => {
-        if (done) { clearInterval(iv); resolve(); }
-      }, 200);
-      setTimeout(() => { clearInterval(iv); done = true; resolve(); }, 10 * 60 * 1000);
+    const { collected, errorMsg } = await runAgentUntilDone(session, prompt, {
+      onEntry: (entry) => {
+        void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
+      },
+      onPatch: (entryId, patch) => {
+        void stream.writeSSE({ data: JSON.stringify({ type: 'patch', entryId, patch }) });
+      },
     });
 
     if (!errorMsg && collected.length > 0) {

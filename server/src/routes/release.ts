@@ -4,8 +4,10 @@ import { z } from 'zod';
 import { db, newId } from '../db/index.js';
 import { releaseRunner } from '../services/releaseRunner.js';
 import { rbacGuard } from '../middleware/auth.js';
-import { ClaudeAPISession } from '../agents/ClaudeAPISession.js';
-import type { ReleaseRun, ReleaseEvent, ConflictFile, NormalizedEntry } from '@devflow/shared';
+import { createAgentProcess } from '../agents/SessionManager.js';
+import { resolveDefaultAgent } from '../agents/resolveDefaultAgent.js';
+import { runAgentUntilDone } from '../agents/agentRunner.js';
+import type { ReleaseRun, ReleaseEvent, ConflictFile } from '@devflow/shared';
 
 export const releaseRouter = new Hono();
 
@@ -168,41 +170,16 @@ releaseRouter.post('/:id/conflict-suggest', async (c) => {
 
   return streamSSE(c, async (stream) => {
     const sessionId = newId('ses');
-    const session = new ClaudeAPISession(sessionId, {});
-
-    const collected: string[] = [];
-    let done = false;
-    let errorMsg = '';
-
-    session.on('entry', (entry: NormalizedEntry) => {
-      void stream.writeSSE({ data: JSON.stringify({ type: 'chunk', content: entry.content }) });
-      if (entry.type === 'assistant_message') {
-        collected.push(entry.content);
-      }
-    });
-
-    session.on('patch', (entryId: string, patch: Partial<NormalizedEntry>) => {
-      void stream.writeSSE({ data: JSON.stringify({ type: 'patch', entryId, patch }) });
-    });
-
-    session.on('exit', (code: number | null) => {
-      done = true;
-      if (code !== 0) errorMsg = 'Agent exited with error';
-    });
-
-    session.on('error', (err: Error) => {
-      done = true;
-      errorMsg = err.message;
-    });
-
+    const session = createAgentProcess(resolveDefaultAgent(), sessionId);
     const prompt = buildPrompt(files);
-    session.send(prompt);
-
-    await new Promise<void>((resolve) => {
-      const iv = setInterval(() => {
-        if (done) { clearInterval(iv); resolve(); }
-      }, 200);
-      setTimeout(() => { clearInterval(iv); done = true; resolve(); }, 5 * 60 * 1000);
+    let { collected, errorMsg } = await runAgentUntilDone(session, prompt, {
+      timeoutMs: 5 * 60 * 1000,
+      onEntry: (entry) => {
+        void stream.writeSSE({ data: JSON.stringify({ type: 'chunk', content: entry.content }) });
+      },
+      onPatch: (entryId, patch) => {
+        void stream.writeSSE({ data: JSON.stringify({ type: 'patch', entryId, patch }) });
+      },
     });
 
     if (!errorMsg && collected.length > 0) {

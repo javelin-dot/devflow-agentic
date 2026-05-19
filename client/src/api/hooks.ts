@@ -174,7 +174,7 @@ export function useDeleteMessages() {
 }
 
 export function useAgentAvailability() {
-  return useQuery<{ agents: Record<string, { present: boolean; path?: string }> }>({
+  return useQuery<{ agents: Record<string, { present: boolean; path?: string }>; defaultAgent?: string }>({
     queryKey: ['agent-availability'],
     queryFn: () => apiFetch('/agent/availability'),
     staleTime: 30_000,
@@ -453,7 +453,7 @@ export function useDefectStatusHistory(defectId: string) {
 export function useAssignAgentFix() {
   const qc = useQueryClient();
   return useMutation<{ success: boolean; status: string; reason?: string; log: string }, Error, { id: string; reqId: string }>({
-    mutationFn: ({ id }) => apiFetch(`/defects/${id}/assign-agent`, { method: 'POST', body: JSON.stringify({ agent: 'claude-api' }) }),
+    mutationFn: ({ id }) => apiFetch(`/defects/${id}/assign-agent`, { method: 'POST', body: JSON.stringify({}) }),
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ['defects', vars.reqId] });
       qc.invalidateQueries({ queryKey: ['defect-history', vars.id] });
