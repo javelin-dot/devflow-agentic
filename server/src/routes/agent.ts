@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { db } from '../db/index.js';
 import { sessionManager } from '../agents/SessionManager.js';
 import { resolveDefaultAgent } from '../agents/resolveDefaultAgent.js';
-import { execSync } from 'node:child_process';
+import { findCliOnPath } from '../utils/findCli.js';
 
 export const agentRouter = new Hono();
 
@@ -72,11 +72,12 @@ agentRouter.get('/availability', (c) => {
   const agents: Record<string, { present: boolean; path?: string }> = {};
   const CLIs = ['claude', 'codex', 'gemini', 'opencode', 'deepseek', 'amp'];
   for (const cli of CLIs) {
-    try {
-      const path = execSync(`which ${cli}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-      agents[cli === 'claude' ? 'claude-code' : cli] = { present: true, path };
-    } catch {
-      agents[cli === 'claude' ? 'claude-code' : cli] = { present: false };
+    const key = cli === 'claude' ? 'claude-code' : cli;
+    const cliPath = findCliOnPath(cli);
+    if (cliPath) {
+      agents[key] = { present: true, path: cliPath };
+    } else {
+      agents[key] = { present: false };
     }
   }
   agents['claude-api'] = { present: !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) };

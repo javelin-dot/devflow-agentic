@@ -1,0 +1,7 @@
+{
+  "comment": "Per-OS Node majors for native modules (better-sqlite3). Windows uses 20 for prebuilt binaries; macOS/Linux use 22.",
+  "windows": "20",
+  "darwin": "22",
+  "linux": "22",
+  "default": "22"
+}

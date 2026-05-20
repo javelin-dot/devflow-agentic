@@ -509,8 +509,22 @@ export function RequirementDetailPage() {
                   {(tab === 'spec' || tab === 'design') && (
                     <button
                       onClick={() => {
-                        if (tab === 'spec') specRef.current?.generate();
-                        else if (tab === 'design') designRef.current?.generate();
+                        const runGenerate = () => {
+                          if (tab === 'spec') specRef.current?.generate();
+                          else if (tab === 'design') designRef.current?.generate();
+                        };
+                        if (dirty) {
+                          setSaving(true);
+                          patchReq.mutate(
+                            { id: req.id, patch: { title, description, notes, priority, kind } },
+                            {
+                              onSuccess: runGenerate,
+                              onSettled: () => setSaving(false),
+                            },
+                          );
+                        } else {
+                          runGenerate();
+                        }
                       }}
                       style={{
                         width: '100%', padding: '7px', borderRadius: 6, border: '1px solid var(--accent-blue)',

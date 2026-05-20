@@ -6,15 +6,20 @@
 
 ## 快速开始
 
-```bash
-# 1. 安装依赖
-npm install
+需安装 [fnm](https://fnm.vercel.app)。脚本会按系统自动选择 Node：**Windows → 20**，**macOS/Linux → 22**（见 `scripts/node-versions.json`）。
 
-# 2. 启动开发服务器（同时启动前后端）
+```bash
+# 1. 安装对应 Node 版本（首次 / 换机）
+npm run setup:node
+
+# 2. 安装依赖
+npm run install:dev
+
+# 3. 启动开发服务器（同时启动前后端）
 npm run dev
 
-# 3. 打开浏览器
-open http://localhost:5173
+# 4. 打开浏览器
+open http://localhost:5173   # macOS；Windows 用浏览器打开同地址
 ```
 
 后端运行在 `http://localhost:4000`，前端通过 Vite proxy 将 `/api` 转发到后端。
@@ -35,7 +40,7 @@ open http://localhost:5173
 
 ## 技术栈
 
-- **Runtime**: Node.js 20+
+- **Runtime**: Node.js 20（Windows）/ 22（macOS·Linux），由 `npm run dev` 自动切换
 - **后端**: Hono + better-sqlite3 (SQLite WAL) + Zod
 - **前端**: React 18 + TypeScript + Vite + TanStack Query + Zustand
 - **Agent 适配**: Claude Code (stream-json) + OpenAI 兼容 API

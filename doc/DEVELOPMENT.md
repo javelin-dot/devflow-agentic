@@ -6,10 +6,19 @@
 
 ## 环境要求
 
-- **Node.js** >= 20（推荐 22）
+- **fnm**（推荐）或 **nvm** — 按操作系统自动切换 Node 主版本（见 `scripts/node-versions.json`）
 - **npm** >= 10
 - **Git**
 - **Claude CLI**（可选，用于 Agent 执行）— `npm install -g @anthropic-ai/claude-code`
+
+### 各系统 Node 版本（由脚本自动选择）
+
+| 系统 | Node 主版本 | 原因 |
+|------|-------------|------|
+| **Windows** | **20** | `better-sqlite3` 有预编译包，免装 VS 编译链 |
+| **macOS / Linux** | **22** | 与 `puppeteer@25` 引擎要求一致，原生模块预编译齐全 |
+
+修改版本：编辑 `scripts/node-versions.json`，然后 `npm run setup:node`。
 
 ---
 
@@ -17,14 +26,19 @@
 
 ```bash
 # 1. 进入项目目录
-cd /Users/jiangjianmin/ai/code/dev-flow-agentein
+cd devflow-agentic
 
-# 2. 安装依赖（自动安装三个 workspace）
-npm install
+# 2. 安装 fnm 对应 Node 并确认版本（首次 / 换机后）
+npm run setup:node
 
-# 3. 启动开发模式（前后端同时启动）
+# 3. 安装依赖（自动选 Node + 跳过 Puppeteer 浏览器下载）
+npm run install:dev
+
+# 4. 启动开发模式（前后端同时启动）
 npm run dev
 ```
+
+> 请使用 **`npm run install:dev`** 和 **`npm run dev`**，不要直接裸跑 `npm install` / 手写 `fnm use`，以免 Windows 与 macOS Node 版本不一致导致原生模块报错。
 
 - 前端：`http://localhost:5173`
 - 后端：`http://localhost:4000`
@@ -122,15 +136,38 @@ curl -s http://localhost:4000/api/agent/availability | jq .
 
 ### better-sqlite3 编译失败
 
-确保 Node >= 18，且系统有 C++ 编译工具链：
+**Windows：** 使用项目脚本（自动 Node 20）：
+
+```powershell
+npm run setup:node
+npm run install:dev
+```
+
+若仍失败：`npm run rebuild:native`（需 VS 2022 Build Tools +「使用 C++ 的桌面开发」）。
+
+**macOS / Linux：**
 
 ```bash
-# macOS
-xcode-select --install
-
-# 若仍失败，尝试重新编译
-npm rebuild better-sqlite3
+npm run setup:node
+npm run install:dev
+# 若仍失败
+xcode-select --install   # macOS
+npm run rebuild:native
 ```
+
+### Windows：fnm / npm 找不到
+
+新开终端后先执行一次（或写入 PowerShell `$PROFILE`）：
+
+```powershell
+fnm env --use-on-cd | Out-String | Invoke-Expression
+```
+
+然后使用 `npm run dev`（脚本内会再次激活 fnm）。
+
+### Puppeteer 安装 / 解压失败
+
+项目根目录 `.npmrc` 已设置 `puppeteer_skip_download=true`。PDF 导出需本机安装 Google Chrome。
 
 ### 前端代理不生效
 

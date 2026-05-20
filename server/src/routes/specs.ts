@@ -1,6 +1,9 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
+import { existsSync, readFileSync } from 'node:fs';
+import { extname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { db, newId } from '../db/index.js';
 import { createAgentProcess } from '../agents/SessionManager.js';
 import { resolveDefaultAgent } from '../agents/resolveDefaultAgent.js';
@@ -9,6 +12,47 @@ import { notificationDispatcher } from '../services/notificationDispatcher.js';
 import type { NormalizedEntry } from '@devflow/shared';
 
 export const specsRouter = new Hono();
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const ATTACHMENTS_DIR = resolve(__dirname, '../../data/attachments');
+
+const TEXT_ATTACHMENT_EXTS = new Set([
+  '.md', '.html', '.htm', '.txt', '.json', '.ts', '.tsx', '.js', '.jsx', '.py', '.go',
+  '.java', '.xml', '.yaml', '.yml', '.css', '.scss', '.less', '.sql', '.sh', '.vue', '.svelte',
+]);
+const MAX_ATTACHMENT_BYTES = 100 * 1024;
+const MAX_TOTAL_ATTACHMENT_BYTES = 200 * 1024;
+
+function loadTextAttachments(reqId: string): string[] {
+  const attachments = db.prepare('SELECT * FROM attachments WHERE req_id=? ORDER BY created_at ASC')
+    .all(reqId) as Array<Record<string, unknown>>;
+  const blocks: string[] = [];
+  let totalBytes = 0;
+
+  for (const a of attachments) {
+    const filename = a.filename as string;
+    const ext = extname(filename).toLowerCase();
+    if (!TEXT_ATTACHMENT_EXTS.has(ext)) continue;
+
+    const size = (a.size as number) ?? 0;
+    if (size > MAX_ATTACHMENT_BYTES) continue;
+    if (totalBytes + size > MAX_TOTAL_ATTACHMENT_BYTES) break;
+
+    const storagePath = a.storage_path as string;
+    const path = join(ATTACHMENTS_DIR, storagePath);
+    if (!existsSync(path)) continue;
+
+    try {
+      const text = readFileSync(path, 'utf8');
+      blocks.push(`<attachment filename="${filename}">\n${text}\n</attachment>`);
+      totalBytes += size;
+    } catch {
+      // skip unreadable files
+    }
+  }
+
+  return blocks;
+}
 
 // Resolve the primary project working directory for a requirement
 function resolveProjectCwd(reqId: string): string | undefined {
@@ -49,8 +93,13 @@ function buildRequirementPrompt(reqId: string, cwd?: string): string {
     }
   }
 
-  if (attachments.length > 0) {
-    prompt += `\n## Context Attachments\n`;
+  const attachmentBlocks = loadTextAttachments(reqId);
+  if (attachmentBlocks.length > 0) {
+    prompt += `\n## Context Attachments\n\n`;
+    prompt += attachmentBlocks.join('\n\n');
+    prompt += '\n';
+  } else if (attachments.length > 0) {
+    prompt += `\n## Context Attachments (metadata only)\n`;
     for (const a of attachments) {
       prompt += `- ${a.filename as string} (size: ${a.size as number} bytes)\n`;
     }
@@ -179,7 +228,7 @@ specsRouter.post('/requirement/generate', async (c) => {
     });
 
     if (!errorMsg && collected.length > 0) {
-      const content = collected.join('');
+      const content = collected.reduce((best, cur) => (cur.length > best.length ? cur : best), '');
       const result = saveDocument(body.reqId, 'requirement_spec', `${req.title} — Requirement Spec`, content);
 
       await stream.writeSSE({ data: JSON.stringify({ type: 'done', documentId: result.id, version: result.version }) });
@@ -228,7 +277,7 @@ specsRouter.post('/design/generate', async (c) => {
     });
 
     if (!errorMsg && collected.length > 0) {
-      const content = collected.join('');
+      const content = collected.reduce((best, cur) => (cur.length > best.length ? cur : best), '');
       const result = saveDocument(body.reqId, 'design_spec', `${req.title} — Design Spec`, content);
 
       await stream.writeSSE({ data: JSON.stringify({ type: 'done', documentId: result.id, version: result.version }) });

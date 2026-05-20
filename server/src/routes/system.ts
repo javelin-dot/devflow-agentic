@@ -5,6 +5,7 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join } from 'node:path';
 import { db, DB_PATH } from '../db/index.js';
+import { runClaudeCli } from '../utils/claudeCli.js';
 
 const execAsync = promisify(exec);
 
@@ -38,24 +39,13 @@ systemRouter.post('/test-connection', async (c) => {
 
   if (body.type === 'claude-code') {
     try {
-      const env = { ...process.env };
-      if (!env.PATH?.includes('/opt/homebrew/bin')) env.PATH = `/opt/homebrew/bin:${env.PATH ?? ''}`;
-      // Apply proxy from DB if not already in env
-      const dbProxy = (db.prepare("SELECT value FROM settings WHERE key='proxyUrl'").get() as { value: string } | undefined)?.value;
-      const proxyUrl = env.HTTPS_PROXY ?? env.HTTP_PROXY ?? dbProxy;
-      if (proxyUrl) {
-        env.HTTP_PROXY = proxyUrl; env.HTTPS_PROXY = proxyUrl;
-        env.http_proxy = proxyUrl; env.https_proxy = proxyUrl;
-      }
-      // Get version first (fast, no network)
-      const { stdout: ver } = await execAsync('claude --version', { env, timeout: 5000 });
-      // Then do a real API call to verify authentication + network
-      await execAsync('claude --output-format text --print "hi"', { env, timeout: 20000 });
-      return c.json({ ok: true, latencyMs: Date.now() - start, message: ver.trim() });
+      const ver = await runClaudeCli(['--version'], 5000);
+      await runClaudeCli(['--output-format', 'text', '--print', 'hi'], 20000);
+      return c.json({ ok: true, latencyMs: Date.now() - start, message: ver });
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
-      // Binary exists but API failed — surface the real error
-      return c.json({ ok: false, latencyMs: Date.now() - start, error: msg.includes('claude') ? msg.split('\n')[0] : msg });
+      const line = msg.split('\n').find((l) => l.trim()) ?? msg;
+      return c.json({ ok: false, latencyMs: Date.now() - start, error: line });
     }
   }
 

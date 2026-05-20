@@ -1,12 +1,7 @@
-import { execSync } from 'node:child_process';
+import { isCliAvailable } from '../utils/findCli.js';
 
 export function isClaudeCliAvailable(): boolean {
-  try {
-    execSync('which claude', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    return true;
-  } catch {
-    return false;
-  }
+  return isCliAvailable('claude');
 }
 
 /** Prefer Claude CLI (reads ~/.claude/settings.json like Claude Code); fall back to HTTP claude-api. */

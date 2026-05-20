@@ -22,8 +22,9 @@ npm workspaces: `client` (React SPA), `server` (Hono API), `shared` (TypeScript 
 ## Common Commands
 
 ```bash
-# Install
-npm install
+# Install (OS-aware Node via fnm: Win→20, macOS/Linux→22)
+npm run setup:node
+npm run install:dev
 
 # Development (frontend http://localhost:5173, backend http://localhost:4000)
 npm run dev

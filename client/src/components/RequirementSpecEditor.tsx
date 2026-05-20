@@ -1,8 +1,9 @@
 import { forwardRef, useImperativeHandle, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { DocumentEditor } from './DocumentEditor';
+import { SpecGenerateStreamPanel } from './SpecGenerateStreamPanel';
 import { useDocuments } from '../api/hooks';
-import { consumeSpecSse } from '../lib/consumeSpecSse';
+import { consumeSpecSse, type SpecStreamParts } from '../lib/consumeSpecSse';
 
 export interface RequirementSpecEditorRef {
   generate: () => void;
@@ -15,19 +16,21 @@ interface RequirementSpecEditorProps {
   onPreviewVersionChange?: (v: number | null) => void;
 }
 
+const EMPTY_STREAM: SpecStreamParts = { thinking: '', assistant: '', toolStatus: '' };
+
 export const RequirementSpecEditor = forwardRef<RequirementSpecEditorRef, RequirementSpecEditorProps>((props, ref) => {
   const { reqId, readonly, previewVersion, onPreviewVersionChange } = props;
   const qc = useQueryClient();
   const { data: documents = [] } = useDocuments({ reqId, type: 'requirement_spec' });
   const [generating, setGenerating] = useState(false);
-  const [streamPreview, setStreamPreview] = useState('');
+  const [stream, setStream] = useState<SpecStreamParts>(EMPTY_STREAM);
   const [genLog, setGenLog] = useState('');
 
   const doc = documents[0];
 
   const handleGenerate = async () => {
     setGenerating(true);
-    setStreamPreview('');
+    setStream(EMPTY_STREAM);
     setGenLog('');
 
     try {
@@ -44,7 +47,7 @@ export const RequirementSpecEditor = forwardRef<RequirementSpecEditorRef, Requir
       }
 
       await consumeSpecSse(resp, {
-        onText: setStreamPreview,
+        onStream: setStream,
         onDone: () => {
           void qc.invalidateQueries({ queryKey: ['documents', { reqId, type: 'requirement_spec' }] });
           setGenLog('生成完成');
@@ -60,38 +63,21 @@ export const RequirementSpecEditor = forwardRef<RequirementSpecEditorRef, Requir
 
   useImperativeHandle(ref, () => ({ generate: handleGenerate }));
 
-  if (!doc) {
-    const showStream = generating || !!streamPreview;
+  if (generating || (!doc && (stream.thinking || stream.assistant))) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-        {!showStream && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-            <div style={{ color: 'var(--text-tertiary)', fontSize: 14 }}>暂无需求 Spec</div>
-            {genLog && !generating && (
-              <div style={{ fontSize: 12, color: genLog.startsWith('生成失败') ? 'var(--accent-red)' : 'var(--accent-green)' }}>
-                {genLog}
-              </div>
-            )}
-          </div>
-        )}
-        {showStream && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 16, overflow: 'hidden' }}>
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 8, flexShrink: 0 }}>
-              {generating ? '流式生成中…' : '预览'}
-            </div>
-            <pre style={{
-              flex: 1, margin: 0, overflow: 'auto', padding: 12,
-              background: 'var(--bg-secondary)', borderRadius: 6, border: '1px solid var(--border-default)',
-              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-              fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)', fontFamily: 'inherit',
-            }}>
-              {streamPreview || (generating ? '等待 AI 输出…' : '')}
-            </pre>
-            {genLog && !generating && (
-              <div style={{ marginTop: 8, fontSize: 12, color: genLog.startsWith('生成失败') ? 'var(--accent-red)' : 'var(--accent-green)' }}>
-                {genLog}
-              </div>
-            )}
+        <SpecGenerateStreamPanel generating={generating} stream={stream} genLog={genLog} />
+      </div>
+    );
+  }
+
+  if (!doc) {
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+        <div style={{ color: 'var(--text-tertiary)', fontSize: 14 }}>暂无需求 Spec</div>
+        {genLog && (
+          <div style={{ fontSize: 12, color: genLog.startsWith('生成失败') ? 'var(--accent-red)' : 'var(--accent-green)' }}>
+            {genLog}
           </div>
         )}
       </div>
@@ -100,20 +86,17 @@ export const RequirementSpecEditor = forwardRef<RequirementSpecEditorRef, Requir
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {generating && streamPreview && (
-        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-default)', display: 'flex', gap: 8, flexDirection: 'column' }}>
-          <pre style={{
-            margin: 0, maxHeight: 120, overflow: 'auto', padding: 8,
-            background: 'var(--bg-secondary)', borderRadius: 4, fontSize: 11,
-            whiteSpace: 'pre-wrap', color: 'var(--text-secondary)',
-          }}>
-            {streamPreview.slice(-2000)}
-          </pre>
-        </div>
-      )}
       <div style={{ flex: 1, overflow: 'hidden' }}>
         <DocumentEditor docId={doc.id} previewVersion={previewVersion} onPreviewVersionChange={onPreviewVersionChange} />
       </div>
+      {genLog && (
+        <div style={{
+          padding: '6px 12px', fontSize: 12, flexShrink: 0, borderTop: '1px solid var(--border-default)',
+          color: genLog.startsWith('生成失败') ? 'var(--accent-red)' : 'var(--accent-green)',
+        }}>
+          {genLog}
+        </div>
+      )}
     </div>
   );
 });

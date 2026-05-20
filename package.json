@@ -3,8 +3,14 @@
   "private": true,
   "workspaces": ["client", "server", "shared"],
   "scripts": {
-    "dev": "concurrently \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
-    "build": "npm run build --workspace=shared && npm run build --workspace=server && npm run build --workspace=client"
+    "preinstall": "node scripts/check-node.mjs",
+    "setup:node": "node scripts/run.mjs setup-node",
+    "install:dev": "node scripts/run.mjs install",
+    "dev": "node scripts/run.mjs dev",
+    "dev:inner": "concurrently \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
+    "build": "node scripts/run.mjs build",
+    "build:inner": "npm run build --workspace=shared && npm run build --workspace=server && npm run build --workspace=client",
+    "rebuild:native": "node scripts/run.mjs rebuild"
   },
   "devDependencies": {
     "concurrently": "^8.2.0",

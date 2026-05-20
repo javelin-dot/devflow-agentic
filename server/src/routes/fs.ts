@@ -1,13 +1,46 @@
 import { Hono } from 'hono';
 import { readdirSync, statSync, existsSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
+
+export const FS_ROOTS = '__roots__';
 
 export const fsRouter = new Hono();
 
-// GET /fs/ls?path=<dir>  — list subdirectories at path (defaults to home)
+const isWin = platform() === 'win32';
+
+function listWindowsDrives(): string[] {
+  const drives: string[] = [];
+  for (let code = 65; code <= 90; code++) {
+    const root = `${String.fromCharCode(code)}:\\`;
+    try {
+      statSync(root);
+      drives.push(resolve(root));
+    } catch {
+      /* not mounted */
+    }
+  }
+  return drives;
+}
+
+function isWindowsDriveRoot(p: string): boolean {
+  return /^[A-Za-z]:[\\/]?$/.test(p);
+}
+
+// GET /fs/ls?path=<dir>  — list subdirectories (defaults to home; __roots__ = drive letters on Windows)
 fsRouter.get('/ls', (c) => {
   const raw = c.req.query('path');
+
+  if (isWin && raw === FS_ROOTS) {
+    return c.json({
+      path: FS_ROOTS,
+      parent: null,
+      dirs: listWindowsDrives(),
+      isRoots: true,
+      isWindows: true,
+    });
+  }
+
   const target = raw ? resolve(raw) : homedir();
 
   if (!existsSync(target)) {
@@ -25,7 +58,16 @@ fsRouter.get('/ls', (c) => {
   }
 
   const parentRaw = dirname(target);
-  const parent = parentRaw !== target ? parentRaw : null;
+  let parent: string | null = parentRaw !== target ? parentRaw : null;
+  if (isWin && parent === null && isWindowsDriveRoot(target)) {
+    parent = FS_ROOTS;
+  }
 
-  return c.json({ path: target, parent, dirs });
+  return c.json({
+    path: target,
+    parent,
+    dirs,
+    isRoots: false,
+    isWindows: isWin,
+  });
 });

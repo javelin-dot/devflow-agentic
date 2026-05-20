@@ -102,6 +102,9 @@ export interface FsLsResult {
   path: string;
   parent: string | null;
   dirs: string[];
+  /** Windows drive letter listing (`path === '__roots__'`). */
+  isRoots?: boolean;
+  isWindows?: boolean;
 }
 
 export function useFsLs(path: string | null) {
