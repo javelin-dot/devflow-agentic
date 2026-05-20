@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { canTransition, type Stage, type Priority } from '@devflow/shared';
 import type { Requirement } from '@devflow/shared';
 import {
@@ -7,7 +7,6 @@ import {
   useCreateRequirement, usePatchRequirement, useArchiveRequirement, useProjects,
 } from '../api/hooks';
 import { QualityGateModal } from '../components/QualityGateModal';
-import { RequirementDetailModal } from '../components/RequirementDetailModal';
 import { UiEmptyState } from '../components/ui';
 import { Plus, Archive, Bot, Search, MoreHorizontal, LayoutList, Kanban } from 'lucide-react';
 
@@ -462,9 +461,9 @@ export function BoardView({ onOpenReq }: { onOpenReq?: (req: Requirement) => voi
   const createReq = useCreateRequirement();
   const patchReq = usePatchRequirement();
   const archiveReq = useArchiveRequirement();
+  const navigate = useNavigate();
 
   const [viewMode, setViewMode] = useState<ViewMode>('kanban');
-  const [searchParams, setSearchParams] = useSearchParams();
   const [showModal, setShowModal] = useState(false);
   const [dragOverStage, setDragOverStage] = useState<Stage | null>(null);
   const [gateModal, setGateModal] = useState<{ reqId: string; fromStage: Stage; toStage: Stage } | null>(null);
@@ -529,9 +528,6 @@ export function BoardView({ onOpenReq }: { onOpenReq?: (req: Requirement) => voi
 
   // All requirements combined for list view
   const allReqs = useMemo(() => [...activeReqs, ...archivedReqs], [activeReqs, archivedReqs]);
-
-  const previewReqId = searchParams.get('req');
-  const previewReq = useMemo(() => allReqs.find(r => r.id === previewReqId) ?? null, [allReqs, previewReqId]);
 
   // Filtered list for list view
   const filteredList = useMemo(() => {
@@ -781,7 +777,7 @@ export function BoardView({ onOpenReq }: { onOpenReq?: (req: Requirement) => voi
                     <KanbanCard
                       key={req.id}
                       req={req}
-                      onClick={() => setSearchParams({ req: req.id })}
+                      onClick={() => navigate(`/requirements/${req.id}`)}
                       onDragStart={(e) => handleDragStart(e, req)}
                       onContextMenu={handleContextMenu}
                     />
@@ -845,29 +841,6 @@ export function BoardView({ onOpenReq }: { onOpenReq?: (req: Requirement) => voi
         </div>
       )}
 
-      {/* ── Detail panel overlay ── */}
-      {previewReq && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, zIndex: 600,
-            background: 'rgba(0,0,0,0.35)',
-            display: 'flex', alignItems: 'stretch', justifyContent: 'flex-end',
-          }}
-          onClick={() => setSearchParams({})}
-        >
-          <div
-            style={{ width: '72%', maxWidth: 1100, height: '100%', background: 'var(--bg-primary)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <RequirementDetailModal
-              req={previewReq}
-              onClose={() => setSearchParams({})}
-              onOpenAI={(req) => { setSearchParams({}); onOpenReq?.(req); }}
-            />
-          </div>
-        </div>
-      )}
-
       {/* Modals */}
       {showModal && <NewReqModal onClose={() => setShowModal(false)} onSubmit={handleCreate} />}
 
@@ -892,6 +865,14 @@ export function BoardView({ onOpenReq }: { onOpenReq?: (req: Requirement) => voi
             zIndex: 400, minWidth: 160, padding: '4px 0', overflow: 'hidden',
           }}
         >
+          <button
+            onClick={() => { closeMenu(); navigate(`/requirements/${contextMenu.req.id}`); }}
+            style={{ width: '100%', padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-secondary)', fontSize: 13, textAlign: 'left' }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-tertiary)'; }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+          >
+            查看详情
+          </button>
           <button
             onClick={() => { closeMenu(); if (onOpenReq) onOpenReq(contextMenu.req); }}
             style={{ width: '100%', padding: '8px 14px', background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-secondary)', fontSize: 13, textAlign: 'left' }}

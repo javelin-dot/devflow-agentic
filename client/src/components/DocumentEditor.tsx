@@ -1,52 +1,13 @@
 import { useState, useMemo } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, X, Eye, FileEdit } from 'lucide-react';
+import { marked } from 'marked';
 import { useDocument, useDocumentVersions, usePatchDocument } from '../api/hooks';
-import type { Document, DocumentVersion } from '@devflow/shared';
 
 interface DocumentEditorProps {
   docId: string;
   readOnly?: boolean;
-}
-
-function VersionList({
-  versions,
-  current,
-  onSelect,
-}: {
-  versions: DocumentVersion[];
-  current: number;
-  onSelect: (v: number) => void;
-}) {
-  return (
-    <div style={{ width: 180, borderRight: '1px solid var(--border-default)', overflowY: 'auto', flexShrink: 0 }}>
-      <div style={{ padding: '10px 12px', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-default)' }}>
-        版本历史
-      </div>
-      {versions.map((v) => (
-        <div
-          key={v.id}
-          onClick={() => onSelect(v.version)}
-          style={{
-            padding: '8px 12px', cursor: 'pointer',
-            background: current === v.version ? 'var(--bg-secondary)' : 'transparent',
-            borderBottom: '1px solid var(--bg-tertiary)',
-          }}
-        >
-          <div style={{ fontSize: 12, color: current === v.version ? 'var(--accent-blue)' : 'var(--text-primary)' }}>
-            v{v.version}
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2 }}>
-            {new Date(v.createdAt).toLocaleString('zh-CN')}
-          </div>
-          {v.summary && (
-            <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {v.summary}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
+  previewVersion?: number | null;
+  onPreviewVersionChange?: (v: number | null) => void;
 }
 
 function DiffView({ oldText, newText, oldLabel, newLabel }: { oldText: string; newText: string; oldLabel: string; newLabel: string }) {
@@ -75,17 +36,25 @@ function DiffView({ oldText, newText, oldLabel, newLabel }: { oldText: string; n
   );
 }
 
-export function DocumentEditor({ docId, readOnly }: DocumentEditorProps) {
+export function DocumentEditor({ docId, readOnly, previewVersion: previewVersionProp, onPreviewVersionChange }: DocumentEditorProps) {
   const { data: doc } = useDocument(docId);
   const { data: versions = [] } = useDocumentVersions(docId);
   const patchDoc = usePatchDocument();
 
   const [editContent, setEditContent] = useState('');
   const [isEditing, setIsEditing] = useState(false);
-  const [previewVersion, setPreviewVersion] = useState<number | null>(null);
+  const [localPreviewVersion, setLocalPreviewVersion] = useState<number | null>(null);
   const [showDiff, setShowDiff] = useState(false);
+  const [viewMode, setViewMode] = useState<'edit' | 'preview'>('preview');
 
-  const currentVersion = previewVersion ?? doc?.currentVersion ?? 0;
+  const previewVersion = previewVersionProp ?? localPreviewVersion;
+  const setPreviewVersion = (v: number | null) => {
+    if (onPreviewVersionChange) onPreviewVersionChange(v);
+    setLocalPreviewVersion(v);
+  };
+
+  const latestVersion = doc?.currentVersion ?? 0;
+  const currentVersion = previewVersion ?? latestVersion;
   const versionData = versions.find((v) => v.version === currentVersion);
   const displayContent = versionData?.content ?? doc?.content ?? '';
 
@@ -95,7 +64,7 @@ export function DocumentEditor({ docId, readOnly }: DocumentEditorProps) {
     if (!editContent.trim() || !doc) return;
     patchDoc.mutate(
       { id: docId, reqId: doc.reqId ?? undefined, patch: { content: editContent } },
-      { onSuccess: () => { setIsEditing(false); setPreviewVersion(null); } }
+      { onSuccess: () => { setIsEditing(false); setPreviewVersion(null); setViewMode('preview'); } }
     );
   };
 
@@ -127,41 +96,34 @@ export function DocumentEditor({ docId, readOnly }: DocumentEditorProps) {
     URL.revokeObjectURL(url);
   };
 
-  const effectiveReadOnly = readOnly || !isEditing || previewVersion !== null;
-
   return (
-    <div style={{ display: 'flex', height: '100%', background: 'var(--bg-primary)' }}>
-      <VersionList
-        versions={versions}
-        current={currentVersion}
-        onSelect={(v) => { setPreviewVersion(v); setIsEditing(false); setShowDiff(false); }}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-primary)' }}>
+      {/* Toolbar */}
+      <div style={{
+        padding: '8px 12px', borderBottom: '1px solid var(--border-default)',
+        display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {doc?.title}
+          {doc?.status === 'approved' && <span style={{ color: 'var(--accent-green)', marginLeft: 8, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}><Check size={12} /> 已批准</span>}
+          {doc?.status === 'rejected' && <span style={{ color: 'var(--accent-red)', marginLeft: 8, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}><X size={12} /> 已打回</span>}
+        </span>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {/* Toolbar */}
-        <div style={{
-          padding: '8px 12px', borderBottom: '1px solid var(--border-default)',
-          display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0,
-        }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>
-            {doc?.title} <span style={{ color: 'var(--text-tertiary)', fontWeight: 400 }}>v{currentVersion}</span>
-            {doc?.status === 'approved' && <span style={{ color: 'var(--accent-green)', marginLeft: 8, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}><Check size={12} /> 已批准</span>}
-            {doc?.status === 'rejected' && <span style={{ color: 'var(--accent-red)', marginLeft: 8, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}><X size={12} /> 已打回</span>}
-          </span>
-
-          {!readOnly && (
-            <>
-              {!isEditing ? (
-                <button
-                  onClick={() => { setEditContent(displayContent); setIsEditing(true); setPreviewVersion(null); setShowDiff(false); }}
-                  style={{
-                    padding: '4px 10px', background: 'var(--accent-blue)', border: 'none',
-                    borderRadius: 4, color: 'var(--text-inverse)', cursor: 'pointer', fontSize: 12,
-                  }}
-                >
-                  编辑
-                </button>
-              ) : (
+        {!readOnly && (
+          <>
+            {!isEditing ? (
+              <button
+                onClick={() => { setEditContent(displayContent); setIsEditing(true); setPreviewVersion(null); setShowDiff(false); setViewMode('edit'); }}
+                style={{
+                  padding: '4px 10px', background: 'var(--accent-blue)', border: 'none',
+                  borderRadius: 4, color: 'var(--text-inverse)', cursor: 'pointer', fontSize: 12,
+                  display: 'flex', alignItems: 'center', gap: 4,
+                }}
+              >
+                <FileEdit size={12} /> 编辑
+              </button>
+            ) : (
+              <>
                 <button
                   onClick={handleSave}
                   disabled={patchDoc.isPending}
@@ -172,81 +134,112 @@ export function DocumentEditor({ docId, readOnly }: DocumentEditorProps) {
                 >
                   {patchDoc.isPending ? '保存中...' : '保存为新版本'}
                 </button>
-              )}
-            </>
-          )}
+                <button
+                  onClick={() => { setIsEditing(false); setViewMode('preview'); }}
+                  style={{
+                    padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
+                    borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12,
+                  }}
+                >
+                  取消
+                </button>
+              </>
+            )}
+          </>
+        )}
 
-          {prevVersion && (
+        {!isEditing && (
+          <div style={{ display: 'flex', background: 'var(--bg-tertiary)', borderRadius: 4, padding: 2, gap: 1 }}>
             <button
-              onClick={() => setShowDiff(!showDiff)}
+              onClick={() => setViewMode('preview')}
               style={{
-                padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
-                borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12,
+                padding: '3px 8px', borderRadius: 3, border: 'none', cursor: 'pointer', fontSize: 11,
+                background: viewMode === 'preview' ? 'var(--bg-secondary)' : 'transparent',
+                color: viewMode === 'preview' ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                display: 'flex', alignItems: 'center', gap: 3,
               }}
             >
-              {showDiff ? '关闭diff' : '与上一版diff'}
+              <Eye size={11} /> 预览
             </button>
-          )}
-
-          <button
-            onClick={handleExportMD}
-            style={{
-              padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
-              borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12,
-            }}
-          >
-            导出MD
-          </button>
-
-          <button
-            onClick={() => handleExport('pdf')}
-            style={{
-              padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
-              borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12,
-            }}
-          >
-            导出PDF
-          </button>
-
-          <button
-            onClick={() => handleExport('docx')}
-            style={{
-              padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
-              borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12,
-            }}
-          >
-            导出DOCX
-          </button>
-        </div>
-
-        {/* Content */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
-          {showDiff && prevVersion ? (
-            <DiffView
-              oldText={prevVersion.content}
-              newText={displayContent}
-              oldLabel={`v${prevVersion.version}`}
-              newLabel={`v${currentVersion}`}
-            />
-          ) : effectiveReadOnly ? (
-            <pre style={{
-              whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit',
-              fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7, margin: 0,
-            }}>
-              {displayContent}
-            </pre>
-          ) : (
-            <textarea
-              value={editContent}
-              onChange={(e) => setEditContent(e.target.value)}
+            <button
+              onClick={() => { setEditContent(displayContent); setViewMode('edit'); setIsEditing(true); setShowDiff(false); }}
               style={{
-                width: '100%', height: '100%', background: 'var(--bg-primary)', border: '1px solid var(--border-default)',
-                borderRadius: 4, color: 'var(--text-primary)', fontSize: 13, lineHeight: 1.7,
-                resize: 'none', padding: 8, boxSizing: 'border-box', fontFamily: 'inherit',
+                padding: '3px 8px', borderRadius: 3, border: 'none', cursor: 'pointer', fontSize: 11,
+                background: viewMode === 'edit' ? 'var(--bg-secondary)' : 'transparent',
+                color: viewMode === 'edit' ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                display: 'flex', alignItems: 'center', gap: 3,
               }}
-            />
-          )}
-        </div>
+            >
+              <FileEdit size={11} /> 源码
+            </button>
+          </div>
+        )}
+
+        {prevVersion && (
+          <button
+            onClick={() => setShowDiff(!showDiff)}
+            style={{
+              padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
+              borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12,
+            }}
+          >
+            {showDiff ? '关闭diff' : '与上一版diff'}
+          </button>
+        )}
+
+        <button
+          onClick={handleExportMD}
+          style={{
+            padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
+            borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12,
+          }}
+        >
+          导出MD
+        </button>
+
+        <button
+          onClick={() => handleExport('pdf')}
+          style={{
+            padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
+            borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12,
+          }}
+        >
+          导出PDF
+        </button>
+
+        <button
+          onClick={() => handleExport('docx')}
+          style={{
+            padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
+            borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12,
+          }}
+        >
+          导出DOCX
+        </button>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, overflow: 'auto', padding: '12px 16px' }}>
+        {showDiff && prevVersion ? (
+          <DiffView
+            oldText={prevVersion.content}
+            newText={displayContent}
+            oldLabel={`v${prevVersion.version}`}
+            newLabel={`v${currentVersion}`}
+          />
+        ) : isEditing ? (
+          <textarea
+            value={editContent}
+            onChange={(e) => setEditContent(e.target.value)}
+            style={{
+              width: '100%', height: '100%', background: 'var(--bg-primary)', border: '1px solid var(--border-default)',
+              borderRadius: 4, color: 'var(--text-primary)', fontSize: 13, lineHeight: 1.7,
+              resize: 'none', padding: 8, boxSizing: 'border-box', fontFamily: 'inherit',
+            }}
+          />
+        ) : (
+          <MarkdownPreview content={displayContent} />
+        )}
       </div>
     </div>
   );
@@ -255,6 +248,24 @@ export function DocumentEditor({ docId, readOnly }: DocumentEditorProps) {
 interface DiffOp {
   type: 'same' | 'del' | 'add';
   line: string;
+}
+
+function MarkdownPreview({ content }: { content: string }) {
+  const html = useMemo(() => {
+    try {
+      return marked.parse(content, { gfm: true, breaks: true }) as string;
+    } catch {
+      return content;
+    }
+  }, [content]);
+
+  return (
+    <div
+      className="markdown-preview"
+      style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text-secondary)' }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 }
 
 function computeLCS(a: string[], b: string[]): DiffOp[] {

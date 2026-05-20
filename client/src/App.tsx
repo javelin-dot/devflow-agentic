@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate, useParams } from '
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { NavSidebar } from './components/NavSidebar';
 import { BoardView } from './views/BoardView';
+import { RequirementDetailPage } from './views/RequirementDetailPage';
 import { ProjectsView } from './views/ProjectsView';
 import { ActivityView } from './views/ActivityView';
 import { ChatWorkspace } from './views/ChatWorkspace';
@@ -89,6 +90,7 @@ function AppLayout() {
         <Routes>
           <Route path="/" element={<Navigate to="/board" replace />} />
           <Route path="/board" element={<ErrorBoundary viewName="需求管理"><BoardView onOpenReq={(req) => setAiPanel({ open: true, req })} /></ErrorBoundary>} />
+          <Route path="/requirements/:reqId" element={<ErrorBoundary viewName="需求详情"><RequirementDetailPage /></ErrorBoundary>} />
           <Route path="/workspace/:reqId" element={<ErrorBoundary viewName="工作区"><WorkspacePage /></ErrorBoundary>} />
           <Route path="/activity" element={<ErrorBoundary viewName="动态"><ActivityView /></ErrorBoundary>} />
           <Route path="/projects" element={<ErrorBoundary viewName="项目"><ProjectsView /></ErrorBoundary>} />
