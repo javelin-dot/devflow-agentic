@@ -1,5 +1,4 @@
 import { forwardRef, useImperativeHandle, useState } from 'react';
-import { Bot } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { DocumentEditor } from './DocumentEditor';
 import { useDocuments } from '../api/hooks';
@@ -61,51 +60,38 @@ export const RequirementSpecEditor = forwardRef<RequirementSpecEditorRef, Requir
 
   useImperativeHandle(ref, () => ({ generate: handleGenerate }));
 
-  const showStreamPanel = generating || (!!streamPreview && !doc);
-
   if (!doc) {
+    const showStream = generating || !!streamPreview;
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, gap: 12, padding: showStreamPanel ? '12px 16px 0' : 16 }}>
-          {!showStreamPanel && (
+        {!showStream && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
             <div style={{ color: 'var(--text-tertiary)', fontSize: 14 }}>暂无需求 Spec</div>
-          )}
-          {!readonly && (
-            <button
-              onClick={handleGenerate}
-              disabled={generating}
-              style={{
-                padding: '8px 16px', background: generating ? 'var(--bg-disabled)' : 'var(--accent-blue)',
-                border: 'none', borderRadius: 4, color: 'var(--text-inverse)', cursor: generating ? 'not-allowed' : 'pointer',
-                fontSize: 13, fontWeight: 600,
-              }}
-            >
-              {generating ? '生成中...' : <><Bot size={14} style={{ display: 'inline', marginRight: 4 }} /> AI 生成需求 Spec</>}
-            </button>
-          )}
-          {genLog && !generating && (
-            <div style={{ fontSize: 12, color: genLog.startsWith('生成失败') ? 'var(--accent-red)' : 'var(--accent-green)' }}>
-              {genLog}
-            </div>
-          )}
-        </div>
-        {showStreamPanel && (
-          <div
-            style={{
-              flex: 1, minHeight: 0, margin: '12px 16px 16px', padding: 16,
-              background: 'var(--bg-secondary)', borderRadius: 6,
-              border: '1px solid var(--border-default)', overflow: 'auto',
-            }}
-          >
-            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 8 }}>
+            {genLog && !generating && (
+              <div style={{ fontSize: 12, color: genLog.startsWith('生成失败') ? 'var(--accent-red)' : 'var(--accent-green)' }}>
+                {genLog}
+              </div>
+            )}
+          </div>
+        )}
+        {showStream && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 16, overflow: 'hidden' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 8, flexShrink: 0 }}>
               {generating ? '流式生成中…' : '预览'}
             </div>
             <pre style={{
-              margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+              flex: 1, margin: 0, overflow: 'auto', padding: 12,
+              background: 'var(--bg-secondary)', borderRadius: 6, border: '1px solid var(--border-default)',
+              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
               fontSize: 13, lineHeight: 1.6, color: 'var(--text-primary)', fontFamily: 'inherit',
             }}>
               {streamPreview || (generating ? '等待 AI 输出…' : '')}
             </pre>
+            {genLog && !generating && (
+              <div style={{ marginTop: 8, fontSize: 12, color: genLog.startsWith('生成失败') ? 'var(--accent-red)' : 'var(--accent-green)' }}>
+                {genLog}
+              </div>
+            )}
           </div>
         )}
       </div>

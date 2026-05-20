@@ -68,6 +68,14 @@ export function DocumentEditor({ docId, readOnly, previewVersion: previewVersion
     );
   };
 
+  const handleSaveCurrent = () => {
+    if (!doc) return;
+    patchDoc.mutate(
+      { id: docId, reqId: doc.reqId ?? undefined, patch: { content: displayContent } },
+      { onSuccess: () => { setPreviewVersion(null); } }
+    );
+  };
+
   const handleExportMD = () => {
     const blob = new Blob([displayContent], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
@@ -112,16 +120,28 @@ export function DocumentEditor({ docId, readOnly, previewVersion: previewVersion
         {!readOnly && (
           <>
             {!isEditing ? (
-              <button
-                onClick={() => { setEditContent(displayContent); setIsEditing(true); setPreviewVersion(null); setShowDiff(false); setViewMode('edit'); }}
-                style={{
-                  padding: '4px 10px', background: 'var(--accent-blue)', border: 'none',
-                  borderRadius: 4, color: 'var(--text-inverse)', cursor: 'pointer', fontSize: 12,
-                  display: 'flex', alignItems: 'center', gap: 4,
-                }}
-              >
-                <FileEdit size={12} /> 编辑
-              </button>
+              <>
+                <button
+                  onClick={() => { setEditContent(displayContent); setIsEditing(true); setPreviewVersion(null); setShowDiff(false); setViewMode('edit'); }}
+                  style={{
+                    padding: '4px 10px', background: 'var(--accent-blue)', border: 'none',
+                    borderRadius: 4, color: 'var(--text-inverse)', cursor: 'pointer', fontSize: 12,
+                    display: 'flex', alignItems: 'center', gap: 4,
+                  }}
+                >
+                  <FileEdit size={12} /> 编辑
+                </button>
+                <button
+                  onClick={handleSaveCurrent}
+                  disabled={patchDoc.isPending}
+                  style={{
+                    padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
+                    borderRadius: 4, color: 'var(--text-secondary)', cursor: patchDoc.isPending ? 'not-allowed' : 'pointer', fontSize: 12,
+                  }}
+                >
+                  {patchDoc.isPending ? '保存中...' : '保存为新版本'}
+                </button>
+              </>
             ) : (
               <>
                 <button

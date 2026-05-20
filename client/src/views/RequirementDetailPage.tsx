@@ -521,7 +521,10 @@ export function RequirementDetailPage() {
                       onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--accent-blue-10)'; }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
                     >
-                      <Bot size={13} />{tab === 'spec' ? '重新生成需求 Spec' : '重新生成设计 Spec'}
+                      <Bot size={13} />
+                      {tab === 'spec'
+                        ? (specDoc ? '重新生成需求 Spec' : 'AI 生成需求 Spec')
+                        : (designDoc ? '重新生成设计 Spec' : 'AI 生成设计 Spec')}
                     </button>
                   )}
                   {dirty && (

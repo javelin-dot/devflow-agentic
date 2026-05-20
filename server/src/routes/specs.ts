@@ -10,8 +10,19 @@ import type { NormalizedEntry } from '@devflow/shared';
 
 export const specsRouter = new Hono();
 
+// Resolve the primary project working directory for a requirement
+function resolveProjectCwd(reqId: string): string | undefined {
+  const row = db.prepare(
+    `SELECT p.path FROM projects p
+     JOIN requirement_projects rp ON p.name = rp.project
+     WHERE rp.req_id = ? AND rp.is_primary = 1
+     LIMIT 1`
+  ).get(reqId) as { path: string } | undefined;
+  return row?.path;
+}
+
 // Build requirement prompt from DB
-function buildRequirementPrompt(reqId: string): string {
+function buildRequirementPrompt(reqId: string, cwd?: string): string {
   const req = db.prepare('SELECT * FROM requirements WHERE id=?').get(reqId) as Record<string, unknown> | undefined;
   if (!req) throw new Error('requirement not found');
 
@@ -24,6 +35,12 @@ function buildRequirementPrompt(reqId: string): string {
   prompt += `- Description: ${req.description ?? ''}\n`;
   prompt += `- Kind: ${req.kind}\n`;
   prompt += `- Priority: ${req.priority}\n`;
+
+  if (cwd) {
+    prompt += `\n## Working Directory\n`;
+    prompt += `You are working in the project repository located at: \`${cwd}\`.\n`;
+    prompt += `All file paths and git commands are relative to this directory unless specified otherwise.\n`;
+  }
 
   if (projects.length > 0) {
     prompt += `\n## Associated Projects\n`;
@@ -56,7 +73,7 @@ function buildRequirementPrompt(reqId: string): string {
 }
 
 // Build design spec prompt from requirement document
-function buildDesignPrompt(reqId: string, reqDocId?: string): string {
+function buildDesignPrompt(reqId: string, reqDocId?: string, cwd?: string): string {
   const req = db.prepare('SELECT * FROM requirements WHERE id=?').get(reqId) as Record<string, unknown> | undefined;
   if (!req) throw new Error('requirement not found');
 
@@ -70,6 +87,11 @@ function buildDesignPrompt(reqId: string, reqDocId?: string): string {
   }
 
   let prompt = `# Design Spec Generation Task\n\n`;
+  if (cwd) {
+    prompt += `## Working Directory\n`;
+    prompt += `You are working in the project repository located at: \`${cwd}\`.\n`;
+    prompt += `All file paths and git commands are relative to this directory unless specified otherwise.\n\n`;
+  }
   prompt += `## Source Requirement\n${reqContent}\n\n`;
   prompt += `## Instructions\n`;
   prompt += `Generate a structured Development Design Spec in Markdown format with the following sections:\n`;
@@ -144,8 +166,9 @@ specsRouter.post('/requirement/generate', async (c) => {
   return streamSSE(c, async (stream) => {
     const sessionId = newId('ses');
     const agent = body.agent ?? resolveDefaultAgent();
-    const session = createAgentProcess(agent, sessionId);
-    const prompt = buildRequirementPrompt(body.reqId);
+    const cwd = resolveProjectCwd(body.reqId);
+    const session = createAgentProcess(agent, sessionId, cwd);
+    const prompt = buildRequirementPrompt(body.reqId, cwd);
     const { collected, errorMsg } = await runAgentUntilDone(session, prompt, {
       onEntry: (entry) => {
         void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
@@ -192,8 +215,9 @@ specsRouter.post('/design/generate', async (c) => {
   return streamSSE(c, async (stream) => {
     const sessionId = newId('ses');
     const agent = body.agent ?? resolveDefaultAgent();
-    const session = createAgentProcess(agent, sessionId);
-    const prompt = buildDesignPrompt(body.reqId, body.reqDocId);
+    const cwd = resolveProjectCwd(body.reqId);
+    const session = createAgentProcess(agent, sessionId, cwd);
+    const prompt = buildDesignPrompt(body.reqId, body.reqDocId, cwd);
     const { collected, errorMsg } = await runAgentUntilDone(session, prompt, {
       onEntry: (entry) => {
         void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
