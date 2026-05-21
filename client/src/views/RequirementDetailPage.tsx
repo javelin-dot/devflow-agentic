@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Save, Bot, Archive, GitGraph, Check, ChevronDown, PanelLeftOpen } from 'lucide-react';
+import { ChevronLeft, Save, Bot, Archive, GitGraph, Check, ChevronDown, PanelLeftOpen, Square } from 'lucide-react';
 import { STAGE_LABELS } from '@devflow/shared';
 import type { Requirement, Stage, Priority } from '@devflow/shared';
 import { useRequirement, usePatchRequirement, useProjects, useDocuments, useDocumentVersions } from '../api/hooks';
@@ -11,7 +11,7 @@ import type { RequirementSpecEditorRef } from '../components/RequirementSpecEdit
 import type { DesignSpecEditorRef } from '../components/DesignSpecEditor';
 import { SubTaskPanel } from './SubTaskPanel';
 import { AttachmentsPanel } from '../components/AttachmentsPanel';
-import { UiEmptyState } from '../components/ui';
+import { UiActionDialog, UiEmptyState, toast } from '../components/ui';
 
 const STAGE_CONFIG_LABELS: Record<string, string> = {
   backlog: 'Backlog', analyzing: 'Analyzing', development: 'Dev',
@@ -159,10 +159,14 @@ export function RequirementDetailPage() {
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [saveSuccessOpen, setSaveSuccessOpen] = useState(false);
   const sidebarWidthRef = useRef(280);
 
   const specRef = useRef<RequirementSpecEditorRef>(null);
   const designRef = useRef<DesignSpecEditorRef>(null);
+  const [specGenerating, setSpecGenerating] = useState(false);
+  const [designGenerating, setDesignGenerating] = useState(false);
+  const aiGenerating = (tab === 'spec' && specGenerating) || (tab === 'design' && designGenerating);
 
   const { data: specDocs = [] } = useDocuments({ reqId: req?.id ?? '', type: 'requirement_spec' });
   const { data: designDocs = [] } = useDocuments({ reqId: req?.id ?? '', type: 'design_spec' });
@@ -247,7 +251,11 @@ export function RequirementDetailPage() {
     setSaving(true);
     patchReq.mutate(
       { id: req.id, patch: { title, description, notes, priority, kind } },
-      { onSettled: () => setSaving(false) }
+      {
+        onSuccess: () => setSaveSuccessOpen(true),
+        onError: (e) => toast('error', `保存失败：${e.message}`),
+        onSettled: () => setSaving(false),
+      },
     );
   };
 
@@ -509,6 +517,11 @@ export function RequirementDetailPage() {
                   {(tab === 'spec' || tab === 'design') && (
                     <button
                       onClick={() => {
+                        if (aiGenerating) {
+                          if (tab === 'spec') specRef.current?.cancel();
+                          else if (tab === 'design') designRef.current?.cancel();
+                          return;
+                        }
                         const runGenerate = () => {
                           if (tab === 'spec') specRef.current?.generate();
                           else if (tab === 'design') designRef.current?.generate();
@@ -527,18 +540,26 @@ export function RequirementDetailPage() {
                         }
                       }}
                       style={{
-                        width: '100%', padding: '7px', borderRadius: 6, border: '1px solid var(--accent-blue)',
-                        background: 'transparent', color: 'var(--accent-blue)',
+                        width: '100%', padding: '7px', borderRadius: 6,
+                        border: `1px solid ${aiGenerating ? 'var(--accent-red)' : 'var(--accent-blue)'}`,
+                        background: 'transparent',
+                        color: aiGenerating ? 'var(--accent-red)' : 'var(--accent-blue)',
                         cursor: 'pointer', fontSize: 13, fontWeight: 500,
                         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
                       }}
-                      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--accent-blue-10)'; }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.background = aiGenerating
+                          ? 'rgba(239,68,68,0.08)'
+                          : 'var(--accent-blue-10)';
+                      }}
                       onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
                     >
-                      <Bot size={13} />
-                      {tab === 'spec'
-                        ? (specDoc ? '重新生成需求 Spec' : 'AI 生成需求 Spec')
-                        : (designDoc ? '重新生成设计 Spec' : 'AI 生成设计 Spec')}
+                      {aiGenerating ? <Square size={12} fill="currentColor" /> : <Bot size={13} />}
+                      {aiGenerating
+                        ? '停止生成'
+                        : tab === 'spec'
+                          ? (specDoc ? '重新生成需求 Spec' : 'AI 生成需求 Spec')
+                          : (designDoc ? '重新生成设计 Spec' : 'AI 生成设计 Spec')}
                     </button>
                   )}
                   {dirty && (
@@ -601,6 +622,7 @@ export function RequirementDetailPage() {
                 readonly={isArchived}
                 previewVersion={specPreviewVersion}
                 onPreviewVersionChange={setSpecPreviewVersion}
+                onGeneratingChange={setSpecGenerating}
               />
             )}
             {tab === 'design' && showDesign && (
@@ -610,6 +632,7 @@ export function RequirementDetailPage() {
                 readonly={isArchived}
                 previewVersion={designPreviewVersion}
                 onPreviewVersionChange={setDesignPreviewVersion}
+                onGeneratingChange={setDesignGenerating}
               />
             )}
             {tab === 'tasks' && showTasks && <SubTaskPanel reqId={req.id} />}
@@ -621,6 +644,28 @@ export function RequirementDetailPage() {
           </div>
         </div>
       </div>
+
+      <UiActionDialog
+        open={saveSuccessOpen}
+        title="保存成功"
+        description="需求信息已更新。你可以继续在本页编辑，或返回看板处理其他需求。"
+        onClose={() => setSaveSuccessOpen(false)}
+        actions={[
+          {
+            label: '继续编辑',
+            variant: 'primary',
+            onClick: () => setSaveSuccessOpen(false),
+          },
+          {
+            label: '返回看板',
+            variant: 'secondary',
+            onClick: () => {
+              setSaveSuccessOpen(false);
+              navigate('/board');
+            },
+          },
+        ]}
+      />
     </div>
   );
 }

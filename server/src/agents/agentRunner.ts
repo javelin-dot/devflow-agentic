@@ -1,5 +1,5 @@
 import type { NormalizedEntry } from '@devflow/shared';
-import type { AgentProcess } from './types.js';
+import type { AgentProcess, AgentMessage } from './types.js';
 
 export interface AgentRunResult {
   collected: string[];
@@ -9,9 +9,10 @@ export interface AgentRunResult {
 
 export async function runAgentUntilDone(
   session: AgentProcess,
-  prompt: string,
+  prompt: AgentMessage,
   options?: {
     timeoutMs?: number;
+    signal?: AbortSignal;
     onEntry?: (entry: NormalizedEntry) => void;
     onPatch?: (entryId: string, patch: Partial<NormalizedEntry>) => void;
   },
@@ -20,6 +21,14 @@ export async function runAgentUntilDone(
   let done = false;
   let errorMsg = '';
   let exitCode: number | null = null;
+
+  const onAbort = () => {
+    if (done) return;
+    session.interrupt();
+    done = true;
+    errorMsg = 'Cancelled by user';
+  };
+  options?.signal?.addEventListener('abort', onAbort);
 
   session.on('entry', (entry: NormalizedEntry) => {
     options?.onEntry?.(entry);
@@ -60,6 +69,8 @@ export async function runAgentUntilDone(
       resolve();
     }, timeoutMs);
   });
+
+  options?.signal?.removeEventListener('abort', onAbort);
 
   return { collected, errorMsg, exitCode };
 }

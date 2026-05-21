@@ -37,6 +37,9 @@ export function NavSidebar({ aiPanelOpen, onToggleAiPanel }: { aiPanelOpen?: boo
         alignItems: 'center',
         padding: '16px 0 12px',
         flexShrink: 0,
+        position: 'relative',
+        zIndex: 100,
+        overflow: 'visible',
       }}
     >
       {/* Logo */}

@@ -1,6 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { newId } from '../db/index.js';
 import type { NormalizedEntry } from '@devflow/shared';
+import type { AgentMessage } from './types.js';
+import { toAgentText } from './types.js';
 import type { AgentProcess } from './types.js';
 
 export class OpenAISession extends EventEmitter implements AgentProcess {
@@ -23,8 +25,9 @@ export class OpenAISession extends EventEmitter implements AgentProcess {
     };
   }
 
-  send(prompt: string): void {
+  send(prompt: AgentMessage): void {
     this.abortController = new AbortController();
+    const text = toAgentText(prompt);
     const { baseUrl, apiKey, model } = this.config;
     const signal = this.abortController.signal;
 
@@ -54,7 +57,7 @@ export class OpenAISession extends EventEmitter implements AgentProcess {
           },
           body: JSON.stringify({
             model,
-            messages: [{ role: 'user', content: prompt }],
+            messages: [{ role: 'user', content: text }],
             stream: true,
           }),
           signal,

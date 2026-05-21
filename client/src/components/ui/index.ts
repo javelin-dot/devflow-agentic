@@ -9,5 +9,7 @@ export { UiSkeleton } from './UiSkeleton';
 export { UiTable } from './UiTable';
 export { UiTabs } from './UiTabs';
 export { UiConfirmDialog } from './UiConfirmDialog';
+export { UiActionDialog } from './UiActionDialog';
+export type { ActionDialogAction } from './UiActionDialog';
 export { ToastContainer, toast, useToastStore } from './UiToast';
 export { UiTooltip } from './UiTooltip';

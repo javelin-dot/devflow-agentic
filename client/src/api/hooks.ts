@@ -665,11 +665,13 @@ export function useDeleteAttachmentV2() {
 
 // ===== M6 hooks: Notifications =====
 
+const NOTIFICATION_POLL_INTERVAL = 3 * 60 * 1000;
+
 export function useNotifications() {
   return useQuery<{ notifications: Notification[]; unreadCount: number }>({
     queryKey: ['notifications'],
     queryFn: () => apiFetch('/notifications'),
-    refetchInterval: 5000,
+    refetchInterval: NOTIFICATION_POLL_INTERVAL,
   });
 }
 
@@ -677,7 +679,7 @@ export function useUnreadCount() {
   return useQuery<{ count: number }>({
     queryKey: ['notifications-unread'],
     queryFn: () => apiFetch('/notifications/unread-count'),
-    refetchInterval: 5000,
+    refetchInterval: NOTIFICATION_POLL_INTERVAL,
   });
 }
 
@@ -696,6 +698,17 @@ export function useMarkAllRead() {
   const qc = useQueryClient();
   return useMutation<{ ok: boolean }, Error, void>({
     mutationFn: () => apiFetch('/notifications/read-all', { method: 'POST' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['notifications'] });
+      qc.invalidateQueries({ queryKey: ['notifications-unread'] });
+    },
+  });
+}
+
+export function useDismissNotification() {
+  const qc = useQueryClient();
+  return useMutation<{ ok: boolean }, Error, string>({
+    mutationFn: (id) => apiFetch(`/notifications/${id}`, { method: 'DELETE' }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['notifications'] });
       qc.invalidateQueries({ queryKey: ['notifications-unread'] });

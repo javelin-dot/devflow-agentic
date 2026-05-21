@@ -6,12 +6,10 @@ import { EventEmitter } from 'node:events';
 import { newId } from '../db/index.js';
 import { buildClaudeEnv, quoteForShell, resolveClaudeExecutable } from '../utils/claudeCli.js';
 import type { NormalizedEntry } from '@devflow/shared';
-import type { AgentProcess } from './types.js';
+import { isSpecGenerationPrompt, type AgentMessage, type AgentProcess } from './types.js';
 
 /** Leave headroom for executable path and CLI flags on Windows cmd.exe (~8191). */
 const WIN32_MAX_INLINE_PROMPT = 6000;
-const SPEC_PRINT_BRIEF =
-  'Generate the document exactly as specified in the appended system instructions. Output ONLY the Markdown document content with no preamble or questions.';
 
 export class ClaudeSession extends EventEmitter implements AgentProcess {
   readonly sessionId: string;
@@ -20,6 +18,8 @@ export class ClaudeSession extends EventEmitter implements AgentProcess {
   private cwd: string | undefined;
   private pendingDecisions = new Map<string, 'approve' | 'reject'>();
   private promptTempFile: string | null = null;
+  /** Partial stream-json blocks keyed by content index */
+  private streamBlocks = new Map<number, { entryId: string; blockType: string; acc: string }>();
 
   constructor(sessionId: string, cwd?: string) {
     super();
@@ -27,11 +27,30 @@ export class ClaudeSession extends EventEmitter implements AgentProcess {
     this.cwd = cwd;
   }
 
-  /** Build CLI args; spill long prompts to a file the CLI reads (not the model Read tool). */
-  private buildCliArgs(prompt: string): string[] {
+  /** Build CLI args; spec tasks use explicit --print user message + system append file. */
+  private buildCliArgs(message: AgentMessage): string[] {
     const base: string[] = ['--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
 
-    if (platform() === 'win32' && prompt.length > WIN32_MAX_INLINE_PROMPT) {
+    if (isSpecGenerationPrompt(message)) {
+      const workDir = this.cwd ?? process.cwd();
+      const dir = join(workDir, '.devflow');
+      mkdirSync(dir, { recursive: true });
+      const file = resolve(dir, 'spec-generate-task.md');
+      writeFileSync(file, message.systemAppend, 'utf8');
+      this.promptTempFile = file;
+      return [
+        ...base,
+        '--permission-mode', 'dontAsk',
+        '--append-system-prompt-file', file,
+        '--print', message.userMessage,
+      ];
+    }
+
+    const prompt = message;
+
+    const usePromptFile = platform() === 'win32' && prompt.length > WIN32_MAX_INLINE_PROMPT;
+
+    if (usePromptFile) {
       const workDir = this.cwd ?? process.cwd();
       const dir = join(workDir, '.devflow');
       mkdirSync(dir, { recursive: true });
@@ -42,7 +61,7 @@ export class ClaudeSession extends EventEmitter implements AgentProcess {
         ...base,
         '--permission-mode', 'dontAsk',
         '--append-system-prompt-file', file,
-        '--print', SPEC_PRINT_BRIEF,
+        '--print', prompt.slice(0, 500) + '\n\n(Full instructions in appended system prompt file.)',
       ];
     }
 
@@ -59,8 +78,8 @@ export class ClaudeSession extends EventEmitter implements AgentProcess {
     this.promptTempFile = null;
   }
 
-  send(prompt: string): void {
-    const args = this.buildCliArgs(prompt);
+  send(message: AgentMessage): void {
+    const args = this.buildCliArgs(message);
 
     const env = buildClaudeEnv();
     const executable = resolveClaudeExecutable();
@@ -120,6 +139,75 @@ export class ClaudeSession extends EventEmitter implements AgentProcess {
     });
   }
 
+  private handleStreamEvent(event: Record<string, unknown>): void {
+    const et = event.type as string;
+
+    if (et === 'content_block_start') {
+      const idx = event.index as number;
+      const block = event.content_block as { type?: string; name?: string } | undefined;
+      const blockType = block?.type ?? 'text';
+      const entryId = newId('msg');
+      this.streamBlocks.set(idx, { entryId, blockType, acc: '' });
+      if (blockType === 'tool_use') {
+        this.emit('entry', {
+          id: entryId,
+          sessionId: this.sessionId,
+          type: 'tool_use',
+          content: '',
+          action: { type: block?.name ?? 'tool', status: 'pending' },
+          status: 'pending',
+          createdAt: new Date().toISOString(),
+        } satisfies NormalizedEntry);
+      }
+      return;
+    }
+
+    if (et === 'content_block_delta') {
+      const idx = event.index as number;
+      const delta = event.delta as { type?: string; text?: string; thinking?: string } | undefined;
+      const slot = this.streamBlocks.get(idx);
+      if (!slot || !delta) return;
+
+      let chunk = '';
+      let entryType: NormalizedEntry['type'] = 'assistant_message';
+      if (delta.type === 'text_delta') {
+        chunk = delta.text ?? '';
+        slot.blockType = 'text';
+      } else if (delta.type === 'thinking_delta') {
+        chunk = delta.thinking ?? '';
+        entryType = 'thinking';
+        slot.blockType = 'thinking';
+      } else {
+        return;
+      }
+
+      if (!chunk) return;
+      slot.acc += chunk;
+      this.emit('entry', {
+        id: slot.entryId,
+        sessionId: this.sessionId,
+        type: entryType,
+        content: chunk,
+        action: null,
+        status: 'success',
+        createdAt: new Date().toISOString(),
+      } satisfies NormalizedEntry);
+      return;
+    }
+
+    if (et === 'content_block_stop') {
+      const idx = event.index as number;
+      const slot = this.streamBlocks.get(idx);
+      if (slot && slot.acc && (slot.blockType === 'text' || slot.blockType === 'thinking')) {
+        this.emit('patch', slot.entryId, {
+          content: slot.acc,
+          type: slot.blockType === 'thinking' ? 'thinking' : 'assistant_message',
+        });
+      }
+      this.streamBlocks.delete(idx);
+    }
+  }
+
   private parseLine(line: string): void {
     let parsed: Record<string, unknown>;
     try {
@@ -141,7 +229,25 @@ export class ClaudeSession extends EventEmitter implements AgentProcess {
 
     const msgType = parsed.type as string;
 
+    if (msgType === 'stream_event') {
+      const event = parsed.event as Record<string, unknown> | undefined;
+      if (event) this.handleStreamEvent(event);
+      return;
+    }
+
     if (msgType === 'assistant') {
+      if (this.streamBlocks.size > 0) {
+        for (const [, slot] of this.streamBlocks) {
+          if (slot.acc && (slot.blockType === 'text' || slot.blockType === 'thinking')) {
+            this.emit('patch', slot.entryId, {
+              content: slot.acc,
+              type: slot.blockType === 'thinking' ? 'thinking' : 'assistant_message',
+            });
+          }
+        }
+        this.streamBlocks.clear();
+        return;
+      }
       // Actual stream-json format: message.content is an array of blocks
       const message = parsed.message as { content?: Array<{ type: string; text?: string; name?: string; id?: string; input?: unknown }> } | undefined;
       const blocks = message?.content ?? [];
@@ -201,7 +307,13 @@ export class ClaudeSession extends EventEmitter implements AgentProcess {
   }
 
   interrupt(): void {
-    this.proc?.kill('SIGINT');
+    this.streamBlocks.clear();
+    if (!this.proc) return;
+    if (platform() === 'win32') {
+      this.proc.kill();
+    } else {
+      this.proc.kill('SIGINT');
+    }
   }
 
   decide(_entryId: string, _decision: 'approve' | 'reject'): void {

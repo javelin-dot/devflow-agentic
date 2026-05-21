@@ -66,6 +66,16 @@ notificationsRouter.post('/read-all', (c) => {
   return c.json({ ok: true });
 });
 
+// DELETE /notifications/:id — dismiss a notification
+notificationsRouter.delete('/:id', (c) => {
+  const { id } = c.req.param();
+  const result = db.prepare('DELETE FROM notifications WHERE id=?').run(id);
+  if (result.changes === 0) {
+    return c.json({ error: 'not_found', message: 'Notification not found' }, 404);
+  }
+  return c.json({ ok: true });
+});
+
 // GET /notification-subscriptions
 notificationsRouter.get('/subscriptions', (c) => {
   const userId = c.req.query('userId');

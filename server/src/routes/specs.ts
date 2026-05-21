@@ -9,6 +9,7 @@ import { createAgentProcess } from '../agents/SessionManager.js';
 import { resolveDefaultAgent } from '../agents/resolveDefaultAgent.js';
 import { runAgentUntilDone } from '../agents/agentRunner.js';
 import { notificationDispatcher } from '../services/notificationDispatcher.js';
+import type { SpecGenerationPrompt } from '../agents/types.js';
 import type { NormalizedEntry } from '@devflow/shared';
 
 export const specsRouter = new Hono();
@@ -65,8 +66,39 @@ function resolveProjectCwd(reqId: string): string | undefined {
   return row?.path;
 }
 
+// Resolve latest requirement_spec document for a requirement
+function resolveLatestRequirementSpecDoc(reqId: string): { id: string; content: string } | null {
+  const row = db.prepare(
+    `SELECT id, content FROM documents
+     WHERE req_id=? AND type='requirement_spec' AND deleted_at IS NULL
+     ORDER BY updated_at DESC, current_version DESC LIMIT 1`,
+  ).get(reqId) as { id: string; content: string } | undefined;
+  return row ?? null;
+}
+
+function summarizeForDescription(markdown: string, maxLen = 500): string {
+  const lines = markdown.split('\n').map((l) => l.trim()).filter(Boolean);
+  const body = lines.filter((l) => !l.startsWith('#')).join(' ').replace(/\s+/g, ' ').trim();
+  if (!body) return lines.slice(0, 3).join('\n').slice(0, maxLen);
+  return body.length <= maxLen ? body : `${body.slice(0, maxLen - 1)}…`;
+}
+
+const SPEC_OUTPUT_RULES = `
+## Output Rules
+- Follow language, tone, and format requirements stated in the requirement **Description** (and attachments).
+- Output **ONLY** the Markdown document. No preamble or questions.
+- Use the source material provided below as the authoritative input.
+`.trim();
+
+function looksLikeIncompleteSpec(content: string): boolean {
+  if (content.length > 1500) return false;
+  return /what feature|should the design spec cover|what would you like to build|what should the design spec cover/i.test(content)
+    || /I've loaded the brainstorming|loaded the brainstorming skill/i.test(content)
+    || /To generate a design spec.*first need to understand/i.test(content);
+}
+
 // Build requirement prompt from DB
-function buildRequirementPrompt(reqId: string, cwd?: string): string {
+function buildRequirementPrompt(reqId: string, cwd?: string): SpecGenerationPrompt {
   const req = db.prepare('SELECT * FROM requirements WHERE id=?').get(reqId) as Record<string, unknown> | undefined;
   if (!req) throw new Error('requirement not found');
 
@@ -106,7 +138,8 @@ function buildRequirementPrompt(reqId: string, cwd?: string): string {
   }
 
   prompt += `\n## Instructions\n`;
-  prompt += `Generate a structured Requirement Spec (PRD) in Markdown format with the following sections:\n`;
+  prompt += `${SPEC_OUTPUT_RULES}\n\n`;
+  prompt += `Generate a structured Requirement Spec (PRD) in Markdown. If the Description does not specify sections, use:\n`;
   prompt += `1. Background\n`;
   prompt += `2. Target Users\n`;
   prompt += `3. Core Value\n`;
@@ -116,42 +149,115 @@ function buildRequirementPrompt(reqId: string, cwd?: string): string {
   prompt += `7. Acceptance Criteria\n`;
   prompt += `8. Risks and Dependencies\n`;
   prompt += `9. Related Requirements\n\n`;
-  prompt += `Output ONLY the Markdown document content, without any additional explanation.\n`;
+  prompt += `Output ONLY the Markdown document content.\n`;
 
-  return prompt;
+  const userLines = [
+    `# Generate Requirement Spec`,
+    ``,
+    `Requirement title: **${req.title as string}**`,
+  ];
+  if (req.description) {
+    userLines.push(``, `User instructions:`, `${req.description as string}`);
+  }
+  userLines.push(
+    ``,
+    `Write a complete Requirement Spec (PRD) in Markdown for the requirement above.`,
+    `Context (attachments, projects, output rules, section outline) is in your appended system instructions.`,
+    `Start with \`# ${req.title as string} — Requirement Spec\` and output the full document now.`,
+  );
+
+  return {
+    kind: 'spec_generation',
+    userMessage: userLines.join('\n'),
+    systemAppend: prompt,
+  };
 }
 
 // Build design spec prompt from requirement document
-function buildDesignPrompt(reqId: string, reqDocId?: string, cwd?: string): string {
+function buildDesignPrompt(reqId: string, reqDocId?: string, cwd?: string): SpecGenerationPrompt {
   const req = db.prepare('SELECT * FROM requirements WHERE id=?').get(reqId) as Record<string, unknown> | undefined;
   if (!req) throw new Error('requirement not found');
 
-  let reqContent = '';
+  let reqDoc: { id: string; content: string } | null = null;
   if (reqDocId) {
-    const doc = db.prepare('SELECT content FROM documents WHERE id=?').get(reqDocId) as { content: string } | undefined;
-    if (doc) reqContent = doc.content;
+    const doc = db.prepare(
+      'SELECT id, content FROM documents WHERE id=? AND type=? AND deleted_at IS NULL',
+    ).get(reqDocId, 'requirement_spec') as { id: string; content: string } | undefined;
+    if (doc) reqDoc = doc;
   }
-  if (!reqContent) {
-    reqContent = `${req.title}\n${req.description ?? ''}`;
+  if (!reqDoc) {
+    reqDoc = resolveLatestRequirementSpecDoc(reqId);
   }
 
   let prompt = `# Design Spec Generation Task\n\n`;
+  prompt += `${SPEC_OUTPUT_RULES}\n\n`;
+
   if (cwd) {
     prompt += `## Working Directory\n`;
     prompt += `You are working in the project repository located at: \`${cwd}\`.\n`;
-    prompt += `All file paths and git commands are relative to this directory unless specified otherwise.\n\n`;
+    prompt += `Inspect existing code in this repository and align the design with current architecture, modules, and conventions.\n\n`;
   }
-  prompt += `## Source Requirement\n${reqContent}\n\n`;
-  prompt += `## Instructions\n`;
-  prompt += `Generate a structured Development Design Spec in Markdown format with the following sections:\n`;
-  prompt += `1. Business Flow (describe in Mermaid diagram syntax within a \`\`\`mermaid code block)\n`;
-  prompt += `2. API Design (method, path, request/response schema, error codes as a table)\n`;
-  prompt += `3. Data Models (tables, columns, types, indexes, foreign keys as a table)\n`;
-  prompt += `4. Risk and Compatibility\n`;
-  prompt += `5. Rollback Plan\n\n`;
-  prompt += `Output ONLY the Markdown document content, without any additional explanation.\n`;
 
-  return prompt;
+  prompt += `## Requirement Metadata\n`;
+  prompt += `- Title: ${req.title}\n`;
+  if (req.description) prompt += `- Brief: ${req.description}\n`;
+
+  if (reqDoc?.content) {
+    prompt += `\n## Source Requirement Spec (authoritative — design must implement this)\n\n`;
+    prompt += reqDoc.content;
+    prompt += `\n`;
+  } else {
+    prompt += `\n## Source Requirement Spec\n\n`;
+    prompt += `_No requirement spec document found. Use title/description only:_\n\n`;
+    prompt += `${req.title}\n${req.description ?? ''}\n`;
+  }
+
+  prompt += `\n## Instructions\n`;
+  prompt += `Generate a structured Development Design Spec in Markdown. Follow language and structure from the Description and requirement spec when specified; otherwise use:\n`;
+  prompt += `1. Overview and Goals\n`;
+  prompt += `2. Business Flow (use \`\`\`mermaid code blocks)\n`;
+  prompt += `3. Modules and Code Changes (reference existing repo paths when cwd is set)\n`;
+  prompt += `4. API Design (method, path, request/response, error codes)\n`;
+  prompt += `5. Data Model (tables/fields/indexes)\n`;
+  prompt += `6. Risks and Compatibility\n`;
+  prompt += `7. Rollback Plan\n\n`;
+  prompt += `Output ONLY the Markdown document content.\n`;
+
+  const hasReqSpec = !!reqDoc?.content?.trim();
+  const userLines = [
+    `# Generate Development Design Spec`,
+    ``,
+    `Requirement title: **${req.title as string}**`,
+  ];
+  if (req.description) {
+    userLines.push(``, `User instructions:`, `${req.description as string}`);
+  }
+  userLines.push(
+    ``,
+    hasReqSpec
+      ? `The full **Requirement Spec** is in your appended system instructions (section "Source Requirement Spec"). Implement every feature described there — this design is for **${req.title as string}**, not a generic project overview.`
+      : `No Requirement Spec document is available. Base the design on the title and user instructions above.`,
+  );
+  if (cwd) {
+    userLines.push(``, `Inspect the codebase at \`${cwd}\` and reference actual module paths in the design.`);
+  }
+  userLines.push(
+    ``,
+    `Write the complete Development Design Spec as Markdown.`,
+    `Section outline and output rules are in your appended system instructions.`,
+    `Start with \`# ${req.title as string} — Design Spec\` and output the full document now.`,
+  );
+
+  return {
+    kind: 'spec_generation',
+    userMessage: userLines.join('\n'),
+    systemAppend: prompt,
+  };
+}
+
+function resolveDesignReqDocId(reqId: string, reqDocId?: string): string | undefined {
+  if (reqDocId) return reqDocId;
+  return resolveLatestRequirementSpecDoc(reqId)?.id;
 }
 
 // Save generated spec to documents table
@@ -219,6 +325,7 @@ specsRouter.post('/requirement/generate', async (c) => {
     const session = createAgentProcess(agent, sessionId, cwd);
     const prompt = buildRequirementPrompt(body.reqId, cwd);
     const { collected, errorMsg } = await runAgentUntilDone(session, prompt, {
+      signal: c.req.raw.signal,
       onEntry: (entry) => {
         void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
       },
@@ -227,9 +334,25 @@ specsRouter.post('/requirement/generate', async (c) => {
       },
     });
 
+    if (errorMsg === 'Cancelled by user') {
+      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: '已取消生成' }) });
+      return;
+    }
+
     if (!errorMsg && collected.length > 0) {
       const content = collected.reduce((best, cur) => (cur.length > best.length ? cur : best), '');
       const result = saveDocument(body.reqId, 'requirement_spec', `${req.title} — Requirement Spec`, content);
+
+      // Backfill requirement description when empty or still a manual generation instruction
+      const reqRow = db.prepare('SELECT description FROM requirements WHERE id=?').get(body.reqId) as { description: string } | undefined;
+      const desc = (reqRow?.description ?? '').trim();
+      const looksLikeInstruction = /生成|spec|Spec|根据/.test(desc) && desc.length < 200;
+      if (!desc || looksLikeInstruction) {
+        const summary = summarizeForDescription(content);
+        if (summary) {
+          db.prepare('UPDATE requirements SET description=? WHERE id=?').run(summary, body.reqId);
+        }
+      }
 
       await stream.writeSSE({ data: JSON.stringify({ type: 'done', documentId: result.id, version: result.version }) });
 
@@ -266,8 +389,10 @@ specsRouter.post('/design/generate', async (c) => {
     const agent = body.agent ?? resolveDefaultAgent();
     const cwd = resolveProjectCwd(body.reqId);
     const session = createAgentProcess(agent, sessionId, cwd);
-    const prompt = buildDesignPrompt(body.reqId, body.reqDocId, cwd);
+    const linkedReqDocId = resolveDesignReqDocId(body.reqId, body.reqDocId);
+    const prompt = buildDesignPrompt(body.reqId, linkedReqDocId, cwd);
     const { collected, errorMsg } = await runAgentUntilDone(session, prompt, {
+      signal: c.req.raw.signal,
       onEntry: (entry) => {
         void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
       },
@@ -276,18 +401,28 @@ specsRouter.post('/design/generate', async (c) => {
       },
     });
 
+    if (errorMsg === 'Cancelled by user') {
+      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: '已取消生成' }) });
+      return;
+    }
+
     if (!errorMsg && collected.length > 0) {
       const content = collected.reduce((best, cur) => (cur.length > best.length ? cur : best), '');
+      if (looksLikeIncompleteSpec(content)) {
+        await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: 'AI 返回了追问而非设计文档，请确认已生成需求 Spec 后重试' }) });
+        return;
+      }
       const result = saveDocument(body.reqId, 'design_spec', `${req.title} — Design Spec`, content);
 
       await stream.writeSSE({ data: JSON.stringify({ type: 'done', documentId: result.id, version: result.version }) });
 
-      // Create document link from design to requirement spec if reqDocId provided
-      if (body.reqDocId) {
+      // Link design spec to the requirement spec it was derived from
+      const reqDocId = linkedReqDocId;
+      if (reqDocId) {
         try {
           db.prepare(
             'INSERT INTO document_links (from_doc_id, to_doc_id, relation, created_at) VALUES (?, ?, ?, ?)'
-          ).run(result.id, body.reqDocId, 'derives_from', new Date().toISOString());
+          ).run(result.id, reqDocId, 'derives_from', new Date().toISOString());
         } catch { /* ignore duplicate link */ }
       }
 

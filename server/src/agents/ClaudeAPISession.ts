@@ -4,6 +4,8 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync } from 
 import { resolve, relative } from 'node:path';
 import { newId } from '../db/index.js';
 import type { NormalizedEntry } from '@devflow/shared';
+import type { AgentMessage } from './types.js';
+import { toAgentText } from './types.js';
 import type { AgentProcess } from './types.js';
 
 async function buildFetchOptions(baseOpts: RequestInit): Promise<RequestInit> {
@@ -97,10 +99,11 @@ export class ClaudeAPISession extends EventEmitter implements AgentProcess {
     this.cwd = config?.cwd;
   }
 
-  send(prompt: string): void {
+  send(prompt: AgentMessage): void {
     if (this.running) return;
     this.abortController = new AbortController();
-    this.messages.push({ role: 'user', content: prompt });
+    const text = toAgentText(prompt);
+    this.messages.push({ role: 'user', content: text });
     this.running = true;
     if (this.openaiCompatible) {
       void this.runLoopOpenAI();

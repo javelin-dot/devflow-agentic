@@ -37,9 +37,17 @@ function parseSseEvents(chunk: string): SpecSseEvent[] {
 
 function formatToolStatus(entry: { type?: string; content?: string; action?: unknown }): string | null {
   if (entry.type !== 'tool_use') return null;
-  const action = entry.action as { type?: string } | null;
-  const name = action?.type ?? 'tool';
-  return `正在使用工具: ${name}`;
+  const action = entry.action as { type?: string; name?: string } | null;
+  const name = action?.name ?? action?.type ?? 'tool';
+  const labels: Record<string, string> = {
+    Read: '读取文件',
+    Write: '写入文件',
+    Edit: '编辑文件',
+    Bash: '执行命令',
+    Glob: '搜索文件',
+    Grep: '搜索内容',
+  };
+  return `正在${labels[name] ?? `使用 ${name}`}…`;
 }
 
 /** Read spec generate SSE and accumulate thinking / assistant / tool status for live preview. */
@@ -100,12 +108,12 @@ export async function consumeSpecSse(resp: Response, options: ConsumeSpecSseOpti
           if (evt.type === 'entry' && evt.entry) {
             applyEntry(evt.entry);
           } else if (evt.type === 'patch' && evt.patch?.content != null && evt.entryId) {
-            const existing = thinkingById.get(evt.entryId) ?? assistantById.get(evt.entryId);
-            if (thinkingById.has(evt.entryId)) {
+            const patchType = (evt.patch as { type?: string }).type;
+            if (patchType === 'thinking') {
               thinkingById.set(evt.entryId, evt.patch.content);
-            } else if (assistantById.has(evt.entryId)) {
-              assistantById.set(evt.entryId, evt.patch.content);
-            } else if (existing === undefined) {
+            } else if (thinkingById.has(evt.entryId)) {
+              thinkingById.set(evt.entryId, evt.patch.content);
+            } else {
               assistantById.set(evt.entryId, evt.patch.content);
             }
             emit();
