@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { newId, db } from '../db/index.js';
+import { newId } from '../db/index.js';
 import type { NormalizedEntry } from '@devflow/shared';
 import type { AgentProcess } from './types.js';
 
@@ -25,19 +25,12 @@ export class ClaudeSession extends EventEmitter implements AgentProcess {
       '--print', prompt,
     ];
 
-    // Ensure /opt/homebrew/bin is in PATH (macOS Homebrew install location)
+    // Ensure /opt/homebrew/bin is in PATH (macOS Homebrew install location).
+    // Proxy variables are already in process.env (applied by loadDbEnvOverrides at startup
+    // and by the settings PUT route on change), so they propagate via { ...process.env }.
     const env = { ...process.env };
     if (!env.PATH?.includes('/opt/homebrew/bin')) {
       env.PATH = `/opt/homebrew/bin:${env.PATH ?? ''}`;
-    }
-    // Proxy: env var takes priority, then DB setting
-    const dbProxy = (db.prepare("SELECT value FROM settings WHERE key='proxyUrl'").get() as { value: string } | undefined)?.value;
-    const proxyUrl = env.HTTPS_PROXY ?? env.HTTP_PROXY ?? env.https_proxy ?? env.http_proxy ?? dbProxy;
-    if (proxyUrl) {
-      env.HTTP_PROXY = proxyUrl;
-      env.HTTPS_PROXY = proxyUrl;
-      env.http_proxy = proxyUrl;
-      env.https_proxy = proxyUrl;
     }
 
     this.proc = spawn('claude', args, {

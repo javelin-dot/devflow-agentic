@@ -39,23 +39,43 @@ systemRouter.post('/test-connection', async (c) => {
   if (body.type === 'claude-code') {
     try {
       const env = { ...process.env };
+      // Strip Claude Code session vars in case the dev server was launched from inside
+      // one — inheriting them would make the spawned claude attempt nested coordination.
+      delete env.CLAUDECODE;
+      delete env.CLAUDE_CODE_ENTRYPOINT;
+      delete env.CLAUDE_CODE_EXECPATH;
+      delete env.AI_AGENT;
       if (!env.PATH?.includes('/opt/homebrew/bin')) env.PATH = `/opt/homebrew/bin:${env.PATH ?? ''}`;
-      // Apply proxy from DB if not already in env
-      const dbProxy = (db.prepare("SELECT value FROM settings WHERE key='proxyUrl'").get() as { value: string } | undefined)?.value;
-      const proxyUrl = env.HTTPS_PROXY ?? env.HTTP_PROXY ?? dbProxy;
-      if (proxyUrl) {
-        env.HTTP_PROXY = proxyUrl; env.HTTPS_PROXY = proxyUrl;
-        env.http_proxy = proxyUrl; env.https_proxy = proxyUrl;
-      }
+      // Proxy is already applied to process.env at startup (loadDbEnvOverrides) and on
+      // settings change — child processes inherit it automatically via { ...process.env }.
       // Get version first (fast, no network)
       const { stdout: ver } = await execAsync('claude --version', { env, timeout: 5000 });
-      // Then do a real API call to verify authentication + network
-      await execAsync('claude --output-format text --print "hi"', { env, timeout: 20000 });
+      // Run from /tmp so claude doesn't auto-discover the project CLAUDE.md (slow init).
+      // Redirect stdin from /dev/null so claude never waits for interactive input.
+      const opts = { env, timeout: 20000, cwd: '/tmp', maxBuffer: 4 * 1024 * 1024 };
+      const { stdout: apiOut, stderr: apiErr } = await execAsync(
+        'claude -p "hi" --output-format text < /dev/null', opts,
+      );
+      console.log('[test-connection] claude API call ok', { stdout: apiOut.slice(0, 200), stderr: apiErr.slice(0, 200) });
       return c.json({ ok: true, latencyMs: Date.now() - start, message: ver.trim() });
     } catch (err) {
-      const msg = (err as Error).message ?? String(err);
-      // Binary exists but API failed — surface the real error
-      return c.json({ ok: false, latencyMs: Date.now() - start, error: msg.includes('claude') ? msg.split('\n')[0] : msg });
+      const execErr = err as Error & { stderr?: string; stdout?: string; killed?: boolean; code?: number; signal?: string };
+      // Log the full error server-side so we can diagnose hangs that produce no client-visible output.
+      console.error('[test-connection] claude failed', {
+        killed: execErr.killed,
+        signal: execErr.signal,
+        code: execErr.code,
+        stderr: execErr.stderr?.slice(0, 500),
+        stdout: execErr.stdout?.slice(0, 500),
+        message: execErr.message?.slice(0, 200),
+      });
+      const partial = (execErr.stderr?.trim() || execErr.stdout?.trim() || '').slice(0, 300);
+      const isTimeout = execErr.killed === true;
+      const base = isTimeout ? `claude CLI timed out (20 s)` : `claude CLI failed`;
+      const error = partial
+        ? `${base}: ${partial.split('\n').filter(Boolean).slice(0, 3).join(' | ')}`
+        : `${base} with no output. Run \`claude -p "hi"\` in your terminal — if it works there but not here, the server process likely lacks keychain/network access (try restarting the server from a Terminal window instead of the IDE).`;
+      return c.json({ ok: false, latencyMs: Date.now() - start, error });
     }
   }
 

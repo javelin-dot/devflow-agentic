@@ -407,6 +407,130 @@ function NewCaseForm({ planId, reqId, onCreated }: NewCaseFormProps) {
   );
 }
 
+interface AIGenerateCasesButtonProps {
+  reqId: string;
+  scope: 'smoke' | 'full';
+  label: string;
+  color: string;
+  onDone?: () => void;
+}
+
+function AIGenerateCasesButton({ reqId, scope, label, color, onDone }: AIGenerateCasesButtonProps) {
+  const [running, setRunning] = useState(false);
+  const [log, setLog] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{ count: number } | null>(null);
+  const logRef = useRef<HTMLPreElement>(null);
+
+  const handleClick = async () => {
+    setRunning(true);
+    setLog('');
+    setError(null);
+    setResult(null);
+
+    try {
+      const resp = await fetch(`${API_BASE}/test-cases/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reqId, scope }),
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        setError(`请求失败 (HTTP ${resp.status})${text ? `: ${text.slice(0, 200)}` : ''}`);
+        setRunning(false);
+        return;
+      }
+      if (!resp.body) {
+        setError('响应没有 body');
+        setRunning(false);
+        return;
+      }
+
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue;
+          const raw = line.slice(5).trim();
+          if (!raw) continue;
+          try {
+            const ev = JSON.parse(raw) as {
+              type?: string;
+              entry?: { content?: string };
+              patch?: { content?: string };
+              count?: number;
+              planId?: string;
+              message?: string;
+            };
+            if (ev.type === 'entry' && ev.entry?.content) {
+              setLog(prev => prev + ev.entry!.content);
+            } else if (ev.type === 'patch' && ev.patch?.content) {
+              setLog(prev => prev + ev.patch!.content);
+            } else if (ev.type === 'done') {
+              setResult({ count: ev.count ?? 0 });
+            } else if (ev.type === 'error' && ev.message) {
+              setError(ev.message);
+            }
+            if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+          } catch { /* ignore non-JSON SSE lines */ }
+        }
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRunning(false);
+      onDone?.();
+    }
+  };
+
+  return (
+    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+      <button
+        onClick={() => { void handleClick(); }}
+        disabled={running}
+        title={`使用 AI 根据需求生成${label}`}
+        style={{
+          background: running ? 'var(--bg-tertiary)' : color, border: 'none', borderRadius: 4,
+          color: 'var(--text-inverse)', padding: '6px 14px',
+          cursor: running ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
+          display: 'inline-flex', alignItems: 'center', gap: 4,
+        }}
+      >
+        <Bot size={14} />
+        {running ? '生成中...' : `AI 生成${label}`}
+      </button>
+      {result && (
+        <span style={{ fontSize: 11, color: 'var(--accent-green)' }}>
+          ✓ 已生成 {result.count} 条用例
+        </span>
+      )}
+      {error && (
+        <span style={{ fontSize: 11, color: 'var(--accent-red)', maxWidth: 280, wordBreak: 'break-all' }}>
+          ✗ {error}
+        </span>
+      )}
+      {(running || log) && (
+        <pre
+          ref={logRef}
+          style={{
+            margin: 0, marginTop: 4, background: 'var(--bg-code)',
+            border: '1px solid var(--bg-tertiary)', borderRadius: 4,
+            padding: 8, fontSize: 11, color: 'var(--text-secondary)',
+            maxHeight: 160, minWidth: 280, maxWidth: 420, overflow: 'auto',
+            whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+          }}
+        >{log || '等待 AI 响应...'}</pre>
+      )}
+    </div>
+  );
+}
+
 interface TddLoopRunnerProps {
   reqId: string;
   onDone?: () => void;
@@ -510,7 +634,7 @@ export function TestDashboard({ reqId: initialReqId }: { reqId?: string }) {
   const { data: plans = [], refetch: refetchPlans } = useTestPlans(reqId);
   const { data: runs = [] } = useTestRuns(reqId || undefined);
   const { data: checks = [] } = useGateChecks(reqId);
-  const { data: allCases = [] } = useTestCases(reqId);
+  const { data: allCases = [], refetch: refetchCases } = useTestCases(reqId);
 
   const card: React.CSSProperties = {
     background: 'var(--bg-secondary)',
@@ -575,19 +699,13 @@ export function TestDashboard({ reqId: initialReqId }: { reqId?: string }) {
               <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>最近运行</div>
             </div>
             <div style={{ flex: 1 }} />
-            <button
-              onClick={() => {
-                void fetch(`${API_BASE}/test-cases/generate`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ reqId, scope: 'smoke' }),
-                });
-              }}
-              style={{
-                background: 'var(--accent-orange)', border: 'none', borderRadius: 4,
-                color: 'var(--text-inverse)', padding: '6px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-              }}
-            ><Bot size={14} style={{ marginRight: 4 }} /> AI 生成冒烟用例</button>
+            <AIGenerateCasesButton
+              reqId={reqId}
+              scope="smoke"
+              label="冒烟用例"
+              color="var(--accent-orange)"
+              onDone={() => { void refetchCases(); void refetchPlans(); }}
+            />
             <TddLoopRunner reqId={reqId} onDone={() => { void refetchPlans(); }} />
           </div>
 

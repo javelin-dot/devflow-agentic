@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { db } from '../db/index.js';
+import { applyProxy } from '../config/loadUserEnv.js';
 
 export const settingsRouter = new Hono();
 
@@ -57,6 +58,9 @@ settingsRouter.put('/', async (c) => {
   if (model !== undefined) {
     if (model) process.env.ANTHROPIC_MODEL = model;
     else delete process.env.ANTHROPIC_MODEL;
+  }
+  if (body.proxyUrl !== undefined) {
+    applyProxy(body.proxyUrl);
   }
 
   const rows = db.prepare('SELECT key, value FROM settings').all() as Array<{ key: string; value: string }>;

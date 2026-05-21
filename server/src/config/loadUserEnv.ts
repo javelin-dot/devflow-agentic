@@ -1,10 +1,40 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { Agent, ProxyAgent, setGlobalDispatcher } from 'undici';
 import { db } from '../db/index.js';
 
 interface ClaudeSettings {
   env?: Record<string, string>;
+}
+
+let currentProxy: string | null = null;
+
+/**
+ * Apply proxy URL to process.env (so spawned child processes inherit it) and
+ * to undici's global dispatcher (so this server's own fetch() calls use it).
+ * Pass undefined/empty to clear — undici dispatcher is reset to a default Agent.
+ */
+export function applyProxy(url: string | undefined | null): void {
+  const next = url?.trim() || null;
+  if (next === currentProxy) return;
+
+  if (next) {
+    process.env.HTTP_PROXY = next;
+    process.env.HTTPS_PROXY = next;
+    process.env.http_proxy = next;
+    process.env.https_proxy = next;
+    setGlobalDispatcher(new ProxyAgent(next));
+    console.log(`[env] proxy applied: ${next}`);
+  } else {
+    delete process.env.HTTP_PROXY;
+    delete process.env.HTTPS_PROXY;
+    delete process.env.http_proxy;
+    delete process.env.https_proxy;
+    setGlobalDispatcher(new Agent());
+    console.log('[env] proxy cleared');
+  }
+  currentProxy = next;
 }
 
 function loadClaudeSettings(): Record<string, string> {
@@ -52,4 +82,9 @@ export function loadDbEnvOverrides(): void {
       process.env[envKey] = row.value;
     }
   }
+
+  // Proxy: env var wins; otherwise fall back to DB setting.
+  const dbProxy = (db.prepare("SELECT value FROM settings WHERE key='proxyUrl'").get() as { value: string } | undefined)?.value;
+  const proxyUrl = process.env.HTTPS_PROXY ?? process.env.HTTP_PROXY ?? process.env.https_proxy ?? process.env.http_proxy ?? dbProxy;
+  if (proxyUrl) applyProxy(proxyUrl);
 }
