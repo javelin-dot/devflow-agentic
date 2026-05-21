@@ -71,6 +71,15 @@ function AppLayout() {
       .catch(() => setShowOnboarding(true));
   }, [isLoggedIn]);
 
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setIsLoggedIn(false);
+      navigate('/login', { replace: true });
+    };
+    window.addEventListener('devflow:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('devflow:unauthorized', onUnauthorized);
+  }, [navigate]);
+
   if (!isLoggedIn) {
     return (
       <Routes>

@@ -263,8 +263,9 @@ class TaskScheduler {
       const message = (err as Error).message;
       db.prepare(`UPDATE sub_tasks SET status='error', error_message=?, completed_at=? WHERE id=?`).run(message, errorAt, task.id);
 
-      // Retry up to 3 times by creating a fix subtask
-      const retryRows = db.prepare(`SELECT COUNT(*) as cnt FROM sub_tasks WHERE req_id=? AND title=? AND status='pending'`).get(task.reqId, `[retry] ${task.title}`) as { cnt: number };
+      // Retry up to 3 times by creating a fix subtask.
+      const baseTitle = task.title.replace(/^(\[retry\]\s*)+/, '');
+      const retryRows = db.prepare(`SELECT COUNT(*) as cnt FROM sub_tasks WHERE req_id=? AND title LIKE ?`).get(task.reqId, `[retry]%${baseTitle}`) as { cnt: number };
       if (retryRows.cnt < 3) {
         const fixId = newId('stk');
         const fixNow = new Date().toISOString();
@@ -275,7 +276,7 @@ class TaskScheduler {
           fixId,
           task.reqId,
           task.analysisId,
-          `[retry] ${task.title}`,
+          `[retry] ${baseTitle}`,
           `Fix the following error and retry the task:\n\nOriginal task: ${task.prompt}\n\nError: ${message}`,
           task.project,
           task.type,

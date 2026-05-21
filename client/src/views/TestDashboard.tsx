@@ -5,13 +5,14 @@ import type { GateCheckEvent, TestRunEvent, TestCase, TestType, TestRun, Stage, 
 import { STAGE_LABELS } from '@devflow/shared';
 import { UiBadge, UiSelect } from '../components/ui';
 import { DefectRow, NewDefectForm, DEFECT_STATUS_LABELS } from './DefectListPanel';
+import { authHeaders } from '../api/client';
 
 const STAGES: Stage[] = ['backlog', 'analyzing', 'development', 'uat', 'prerelease', 'released'];
 const CASE_STATUS_LABELS: Record<TestStatus, string> = {
   draft: '草稿', ready: '就绪', running: '运行中', passed: '通过', failed: '失败', skipped: '跳过',
 };
 
-const API_BASE = 'http://localhost:4000/api';
+const API_BASE = '/api';
 
 const TEST_TYPE_LABELS: Record<TestType, string> = {
   smoke: '冒烟',
@@ -137,7 +138,7 @@ function GateCard({ reqId, from, to, label, checks }: GateCardProps) {
 
     const resp = await fetch(`${API_BASE}/gate-checks/run`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ reqId, fromStage: from, toStage: to }),
     });
 
@@ -231,7 +232,7 @@ function PlanRunner({ planId, planTitle, reqId }: PlanRunnerProps) {
   const logRef = useRef<HTMLPreElement>(null);
 
   const handleRun = async () => {
-    const resp0 = await fetch(`${API_BASE}/test-plans/${planId}`);
+    const resp0 = await fetch(`${API_BASE}/test-plans/${planId}`, { headers: authHeaders() });
     const planData = await resp0.json() as { testCases?: Array<{ command: string; cwd?: string; title: string; testType?: string }> };
     const cases = planData.testCases ?? [];
     if (cases.length === 0) {
@@ -246,7 +247,7 @@ function PlanRunner({ planId, planTitle, reqId }: PlanRunnerProps) {
     const commands = cases.map(c => ({ cmd: c.command, cwd: c.cwd ?? undefined, title: c.title, testType: c.testType }));
     const resp = await fetch(`${API_BASE}/test-runs`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ planId, reqId, runType: 'manual', commands }),
     });
 
@@ -367,7 +368,7 @@ function NewCaseForm({ planId, reqId, onCreated }: NewCaseFormProps) {
     if (!title.trim() || !command.trim()) return;
     await fetch(`${API_BASE}/test-plans/${planId}/cases`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ title, command, testType, description }),
     });
     onCreated();
@@ -438,7 +439,7 @@ function AIGenerateCasesButton({ reqId, scope, label, color, onDone }: AIGenerat
     if (sid) {
       // best-effort: ask server to interrupt the agent process
       try {
-        await fetch(`${API_BASE}/test-cases/generate/${sid}/cancel`, { method: 'POST' });
+        await fetch(`${API_BASE}/test-cases/generate/${sid}/cancel`, { method: 'POST', headers: authHeaders() });
       } catch { /* ignore */ }
     }
     abortRef.current?.abort();
@@ -458,7 +459,7 @@ function AIGenerateCasesButton({ reqId, scope, label, color, onDone }: AIGenerat
     try {
       const resp = await fetch(`${API_BASE}/test-cases/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ reqId, scope }),
         signal: controller.signal,
       });
@@ -648,7 +649,7 @@ function TddLoopRunner({ reqId, onDone }: TddLoopRunnerProps) {
 
     const resp = await fetch(`${API_BASE}/tdd-loop/run`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ reqId, scope: 'full' }),
     });
 
@@ -775,7 +776,7 @@ function RequirementTestPanel({ reqId, reqFilter, stageFilter, onReqChange, onSt
   const handleCaseStatusChange = async (id: string, status: TestStatus) => {
     await fetch(`${API_BASE}/test-cases/${id}`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ status }),
     });
     void refetchCases();

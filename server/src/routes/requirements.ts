@@ -195,6 +195,13 @@ requirementsRouter.patch('/:id', async (c) => {
       );
     }
 
+    if (currentStage === 'prerelease' && data.stage === 'released' && actor !== 'user') {
+      return c.json(
+        { error: 'prerelease → released requires human signoff (X-Actor: user)' },
+        403
+      );
+    }
+
     // 1b. Quality gate check for transitions that require it
     const gate = checkTransitionSync(id, currentStage, data.stage);
     if (!gate.passed) {

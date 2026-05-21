@@ -52,6 +52,19 @@ async function resolveConflictFiles(repoPath: string, rawConflicts: unknown[]): 
   );
 }
 
+function getJenkinsTemplateForReq(reqId: string | null): Record<string, unknown> | undefined {
+  if (!reqId) return undefined;
+  return db.prepare(`
+    SELECT jt.*
+    FROM requirement_projects rp
+    JOIN projects p ON p.name = rp.project
+    JOIN jenkins_templates jt ON jt.id = p.jenkins_template_id
+    WHERE rp.req_id=?
+    ORDER BY rp.is_primary DESC
+    LIMIT 1
+  `).get(reqId) as Record<string, unknown> | undefined;
+}
+
 class ReleaseRunner extends EventEmitter {
   private subscribers = new Map<string, SSECallback[]>();
   private pollTimers = new Map<string, ReturnType<typeof setInterval>>();
@@ -290,11 +303,7 @@ class ReleaseRunner extends EventEmitter {
     const row = db.prepare('SELECT * FROM release_runs WHERE id=?').get(runId) as Record<string, unknown> | undefined;
     const reqId = row?.req_id as string | null;
 
-    const jenkinsTemplate = reqId
-      ? (db.prepare(
-          'SELECT jt.* FROM jenkins_templates jt JOIN requirement_projects rp ON rp.project = jt.name WHERE rp.req_id=? LIMIT 1'
-        ).get(reqId) as Record<string, unknown> | undefined)
-      : null;
+    const jenkinsTemplate = getJenkinsTemplateForReq(reqId);
 
     if (jenkinsTemplate) {
       const jenkinsUrl = jenkinsTemplate.jenkins_url as string;
@@ -489,11 +498,7 @@ class ReleaseRunner extends EventEmitter {
     this.setState(runId, 'triggering');
     this.appendLog(runId, 'Triggering CI build...');
 
-    const jenkinsTemplate = reqId
-      ? (db.prepare(
-          'SELECT jt.* FROM jenkins_templates jt JOIN requirement_projects rp ON rp.project = jt.name WHERE rp.req_id=? LIMIT 1'
-        ).get(reqId) as Record<string, unknown> | undefined)
-      : null;
+    const jenkinsTemplate = getJenkinsTemplateForReq(reqId);
 
     if (jenkinsTemplate) {
       const jenkinsUrl = jenkinsTemplate.jenkins_url as string;
@@ -594,11 +599,7 @@ class ReleaseRunner extends EventEmitter {
     } else {
       this.setState(runId, 'pushing');
       const reqId = row.req_id as string | null;
-      const jenkinsTemplate = reqId
-        ? (db.prepare(
-            'SELECT jt.* FROM jenkins_templates jt JOIN requirement_projects rp ON rp.project = jt.name WHERE rp.req_id=? LIMIT 1'
-          ).get(reqId) as Record<string, unknown> | undefined)
-        : null;
+      const jenkinsTemplate = getJenkinsTemplateForReq(reqId);
 
       if (jenkinsTemplate) {
         const jenkinsUrl = jenkinsTemplate.jenkins_url as string;

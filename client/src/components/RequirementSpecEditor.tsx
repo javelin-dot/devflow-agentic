@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { DocumentEditor } from './DocumentEditor';
 import { useDocuments } from '../api/hooks';
 import { consumeSpecSse } from '../lib/consumeSpecSse';
+import { authHeaders } from '../api/client';
 
 export interface RequirementSpecEditorRef {
   generate: () => void;
@@ -33,7 +34,7 @@ export const RequirementSpecEditor = forwardRef<RequirementSpecEditorRef, Requir
     try {
       const resp = await fetch('/api/specs/requirement/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ reqId }),
       });
 

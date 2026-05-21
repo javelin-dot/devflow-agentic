@@ -15,6 +15,33 @@ mkdirSync(EXPORTS_DIR, { recursive: true });
 
 export const documentsRouter = new Hono();
 
+async function drainResponse(resp: Response): Promise<void> {
+  if (!resp.body) return;
+  const reader = resp.body.getReader();
+  while (true) {
+    const { done } = await reader.read();
+    if (done) return;
+  }
+}
+
+async function triggerAutoSmoke(baseUrl: string, reqId: string): Promise<void> {
+  try {
+    const url = new URL('/api/test-cases/generate', baseUrl);
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Actor': 'system' },
+      body: JSON.stringify({ reqId, scope: 'smoke' }),
+    });
+    if (!resp.ok) {
+      console.error('[auto-smoke] trigger failed:', resp.status, await resp.text().catch(() => ''));
+      return;
+    }
+    await drainResponse(resp);
+  } catch (e) {
+    console.error('[auto-smoke] trigger error:', (e as Error).message);
+  }
+}
+
 function parseDocument(row: Record<string, unknown>): Document {
   return {
     id: row.id as string,
@@ -311,18 +338,7 @@ documentsRouter.post('/:id/approve', rbacGuard('pm', 'admin'), async (c) => {
   // M7 T10: design_spec approved → auto-trigger smoke test case generation
   const docRow = db.prepare('SELECT * FROM documents WHERE id=?').get(id) as Record<string, unknown>;
   if (docRow.type === 'design_spec' && docRow.req_id) {
-    try {
-      const resp = await fetch('http://localhost:4000/api/test-cases/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reqId: docRow.req_id as string, scope: 'smoke' }),
-      });
-      if (!resp.ok) {
-        console.error('[auto-smoke] trigger failed:', resp.status);
-      }
-    } catch (e) {
-      console.error('[auto-smoke] trigger error:', (e as Error).message);
-    }
+    void triggerAutoSmoke(c.req.url, docRow.req_id as string);
   }
 
   const updated = db.prepare('SELECT * FROM documents WHERE id=?').get(id) as Record<string, unknown>;
@@ -348,8 +364,8 @@ documentsRouter.post('/:id/reject', rbacGuard('pm', 'admin'), async (c) => {
   const latestVer = db.prepare('SELECT id FROM document_versions WHERE doc_id=? ORDER BY version DESC LIMIT 1')
     .get(id) as { id: string } | undefined;
   if (latestVer) {
-    db.prepare('UPDATE document_versions SET summary=? || "\n[REJECTED]: " || ? WHERE id=?')
-      .run(latestVer.id, body.reason, latestVer.id);
+    db.prepare('UPDATE document_versions SET summary=COALESCE(summary, "") || ? WHERE id=?')
+      .run(`\n[REJECTED]: ${body.reason}`, latestVer.id);
   }
 
   const updated = db.prepare('SELECT * FROM documents WHERE id=?').get(id) as Record<string, unknown>;

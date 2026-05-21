@@ -3,7 +3,7 @@ import { Check, X, Pencil, Plus, FileText, BookOpen, ListChecks, GitBranch, Arro
 import { UiSelect } from '../components/ui';
 import { useSessions, useCreateSession, usePatchSession, useDeleteSession, useMessages, useAgentAvailability, useSettings, useAttachmentsV2, useDeleteMessage, useDeleteMessages } from '../api/hooks';
 import { AttachmentsPanel } from '../components/AttachmentsPanel';
-import { apiFetch } from '../api/client';
+import { apiFetch, authHeaders } from '../api/client';
 import type { ChatSession, ChatMessage, AgentStreamEvent, Requirement } from '@devflow/shared';
 import { AnalysisComparePanel } from './AnalysisComparePanel';
 import { SubTaskPanel } from './SubTaskPanel';
@@ -307,10 +307,14 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
     try {
       const resp = await fetch('/api/agent/run', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Actor': 'user' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ sessionId: session.id, agent: session.agent, prompt: fullPrompt }),
         signal: ac.signal,
       });
+
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}: ${await resp.text().catch(() => resp.statusText)}`);
+      }
 
       const reader = resp.body!.getReader();
       const dec = new TextDecoder();
@@ -390,7 +394,7 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
         const contents = await Promise.all(
           filesToFetch.map(async (f: { id: string; filename: string }) => {
             try {
-              const res = await fetch(`/api/attachments/${f.id}/raw`);
+              const res = await fetch(`/api/attachments/${f.id}/raw`, { headers: authHeaders() });
               if (!res.ok) return null;
               const text = await res.text();
               return { name: f.filename, text };
@@ -436,7 +440,7 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
     try {
       const resp = await fetch('/api/specs/requirement/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ reqId: req.id, agent: session.agent }),
         signal: ac.signal,
       });
@@ -526,7 +530,7 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
     try {
       const resp = await fetch('/api/specs/design/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ reqId: req.id, agent: session.agent }),
         signal: ac.signal,
       });

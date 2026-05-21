@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { apiFetch } from '../api/client';
+import { apiFetch, authHeaders } from '../api/client';
 import { useResumeRelease } from '../api/hooks';
 import type { ConflictFile, ConflictBlock } from '@devflow/shared';
 
@@ -182,9 +182,12 @@ export function ConflictResolutionView({ runId, onResolved }: Props) {
     try {
       const resp = await fetch(`/api/release/${runId}/conflict-suggest`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ files: conflictFiles }),
       });
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}: ${await resp.text().catch(() => resp.statusText)}`);
+      }
       if (!resp.body) throw new Error('No response body');
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();

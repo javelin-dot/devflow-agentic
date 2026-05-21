@@ -1,18 +1,11 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Send, X, Bot, FileText, FlaskConical, BarChart3, Bug, HelpCircle, Sparkles, Square } from 'lucide-react';
 import { useRequirements, useDefects, useTestCases, useTestRuns } from '../api/hooks';
+import { authHeaders } from '../api/client';
 import type { Requirement, Stage } from '@devflow/shared';
 import { STAGE_LABELS } from '@devflow/shared';
 
 const API_BASE = '/api';
-
-function authHeaders(extra?: HeadersInit): HeadersInit {
-  const token = localStorage.getItem('devflow_token');
-  return {
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...(extra ?? {}),
-  };
-}
 
 type MessageRole = 'user' | 'assistant' | 'system';
 

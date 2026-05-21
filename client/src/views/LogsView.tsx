@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { Check, MessageCircle, X, DollarSign, Plus } from 'lucide-react';
 import { useLogTargets, useCreateLogTarget, useLogSessions, useCreateLogSession, useDeleteLogSession } from '../api/hooks';
+import { authHeaders } from '../api/client';
 import type { DiagnosisStep, LogStreamEvent, LogChatSession } from '@devflow/shared';
 
-const API_BASE = 'http://localhost:4000/api';
+const API_BASE = '/api';
 
 // ===== LogsSidebar =====
 interface LogsSidebarProps {
@@ -151,9 +152,12 @@ function LogChatPanel({
       }
       const resp = await fetch(`${API_BASE}/logs/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ sessionId, query }),
       });
+      if (!resp.ok) {
+        throw new Error(`HTTP ${resp.status}: ${await resp.text().catch(() => resp.statusText)}`);
+      }
       setQuery('');
       const reader = resp.body!.getReader();
       const decoder = new TextDecoder();

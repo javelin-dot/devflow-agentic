@@ -1,21 +1,26 @@
 const BASE = '/api';
 
+export function authHeaders(extra?: HeadersInit): HeadersInit {
+  const token = localStorage.getItem('devflow_token');
+  return {
+    'X-Actor': 'user',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(extra ?? {}),
+  };
+}
+
 export async function apiFetch<T>(
   path: string,
   options?: RequestInit
 ): Promise<T> {
   const isFormData = options?.body instanceof FormData;
-  const token = localStorage.getItem('devflow_token');
   const res = await fetch(`${BASE}${path}`, {
-    headers: {
-      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options?.headers ?? {}),
-    },
+    headers: authHeaders(isFormData ? options?.headers : { 'Content-Type': 'application/json', ...(options?.headers ?? {}) }),
     ...options,
   });
   if (res.status === 401) {
     localStorage.removeItem('devflow_token');
+    window.dispatchEvent(new Event('devflow:unauthorized'));
     throw new Error('Unauthorized');
   }
   if (!res.ok) {

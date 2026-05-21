@@ -2,8 +2,7 @@ import { useState } from 'react';
 import { Check, X, Minus, HelpCircle } from 'lucide-react';
 import type { GateCheckEvent, GateCheckResult } from '@devflow/shared';
 import { UiBadge } from '../components/ui';
-
-const API_BASE = 'http://localhost:4000/api';
+import { authHeaders } from '../api/client';
 
 interface CheckItem {
   checkType: string;
@@ -47,20 +46,33 @@ export function QualityGateModal({ reqId, fromStage, toStage, onPassed, onClose 
   const [running, setRunning] = useState(false);
   const [allPassed, setAllPassed] = useState<boolean | null>(null);
   const [doneMessage, setDoneMessage] = useState('');
+  const [error, setError] = useState('');
 
   const handleRun = async () => {
     setRunning(true);
     setChecks([]);
     setAllPassed(null);
     setDoneMessage('');
+    setError('');
 
-    const resp = await fetch(`${API_BASE}/gate-checks/run`, {
+    const resp = await fetch('/api/gate-checks/run', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ reqId, fromStage, toStage }),
     });
 
-    if (!resp.body) { setRunning(false); return; }
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      setError(`HTTP ${resp.status}: ${text.slice(0, 200)}`);
+      setRunning(false);
+      return;
+    }
+
+    if (!resp.body) {
+      setError('门禁检查响应为空');
+      setRunning(false);
+      return;
+    }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
@@ -137,6 +149,12 @@ export function QualityGateModal({ reqId, fromStage, toStage, onPassed, onClose 
         >{running ? '检查中...' : '运行检查'}</button>
 
         {/* Check results */}
+        {error && (
+          <div style={{ padding: '8px 12px', borderRadius: 6, marginBottom: 16, background: 'var(--gate-fail-bg)', color: 'var(--text-inverse)', fontSize: 13 }}>
+            {error}
+          </div>
+        )}
+
         {checks.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             {checks.map((c, i) => (

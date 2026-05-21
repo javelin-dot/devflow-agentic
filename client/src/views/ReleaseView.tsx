@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { UiSelect } from '../components/ui';
 import { useReleaseRuns, useCancelRelease, useVerifyProduction } from '../api/hooks';
+import { authHeaders } from '../api/client';
 import type { ReleaseRun, ReleaseMode, ReleaseState } from '@devflow/shared';
 import { ConflictResolutionView } from './ConflictResolutionView';
 
@@ -65,9 +66,13 @@ function StartModal({ onClose }: StartModalProps) {
     try {
       const resp = await fetch('/api/release/start', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ reqId: reqId || undefined, mode }),
       });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => resp.statusText);
+        throw new Error(`HTTP ${resp.status}: ${text.slice(0, 200)}`);
+      }
       if (!resp.body) throw new Error('No response body');
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();

@@ -6,7 +6,8 @@ type GateSSECallback = (event: GateCheckEvent) => void;
 // Check definitions per transition
 const GATE_CHECKS: Record<string, Array<{ type: string; desc: string }>> = {
   'development→uat': [
-    { type: 'all_subtasks_done', desc: '所有子任务状态为 done' },
+    { type: 'all_subtasks_terminal', desc: '所有子任务到达终态且至少一个完成' },
+    { type: 'merge_publish_completed', desc: 'dev → uat 合并发布已完成' },
     { type: 'no_open_defects_p0', desc: '无 P0 级别未解决缺陷' },
     { type: 'test_run_pass', desc: '最近一次测试运行通过' },
   ],
@@ -15,6 +16,7 @@ const GATE_CHECKS: Record<string, Array<{ type: string; desc: string }>> = {
     { type: 'acceptance_test_pass', desc: '验收测试通过' },
   ],
   'prerelease→released': [
+    { type: 'release_run_accepted', desc: '正式发布记录已完成并验收通过' },
     { type: 'no_open_defects_any', desc: '无任何未解决缺陷' },
     { type: 'regression_pass', desc: '回归测试全部通过' },
   ],
@@ -22,12 +24,39 @@ const GATE_CHECKS: Record<string, Array<{ type: string; desc: string }>> = {
 
 function runCheck(reqId: string, checkType: string): { result: GateCheckResult; detail: string } {
   switch (checkType) {
-    case 'all_subtasks_done': {
-      const rows = db.prepare("SELECT COUNT(*) as cnt FROM sub_tasks WHERE req_id=? AND status NOT IN ('done','cancelled')").get(reqId) as { cnt: number };
-      const cnt = rows.cnt;
-      return cnt === 0
-        ? { result: 'passed', detail: '所有子任务已完成' }
-        : { result: 'failed', detail: `${cnt} 个子任务未完成` };
+    case 'all_subtasks_done':
+    case 'all_subtasks_terminal': {
+      const row = db.prepare(`
+        SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN status = 'done' THEN 1 ELSE 0 END) as done,
+          SUM(CASE WHEN status NOT IN ('done','cancelled') THEN 1 ELSE 0 END) as open
+        FROM sub_tasks
+        WHERE req_id=?
+      `).get(reqId) as { total: number; done: number | null; open: number | null };
+      const total = row.total ?? 0;
+      const done = row.done ?? 0;
+      const open = row.open ?? 0;
+      if (total === 0) return { result: 'failed', detail: '没有可验收的开发子任务' };
+      if (done === 0) return { result: 'failed', detail: '没有已完成的开发子任务' };
+      return open === 0
+        ? { result: 'passed', detail: `子任务已到达终态，完成 ${done}/${total}` }
+        : { result: 'failed', detail: `${open} 个子任务未到达终态` };
+    }
+    case 'merge_publish_completed': {
+      const row = db.prepare(`
+        SELECT id, state, verdict
+        FROM release_runs
+        WHERE req_id=? AND mode='mergePublish'
+        ORDER BY started_at DESC
+        LIMIT 1
+      `).get(reqId) as { id: string; state: string; verdict: string | null } | undefined;
+      if (!row) return { result: 'failed', detail: '没有 dev → uat 合并发布记录' };
+      const completed = row.state === 'done' || row.state === 'completed';
+      if (completed && row.verdict === 'accepted') {
+        return { result: 'passed', detail: `合并发布已完成: ${row.id}` };
+      }
+      return { result: 'failed', detail: `最近合并发布 ${row.id} 状态=${row.state}, verdict=${row.verdict ?? '-'}` };
     }
     case 'no_open_defects_p0': {
       const r = db.prepare("SELECT COUNT(*) as cnt FROM defects WHERE req_id=? AND severity='P0' AND status IN ('pending_confirm','to_fix','to_regress')").get(reqId) as { cnt: number };
@@ -67,6 +96,21 @@ function runCheck(reqId: string, checkType: string): { result: GateCheckResult; 
       return r.status === 'passed'
         ? { result: 'passed', detail: '回归测试通过' }
         : { result: 'failed', detail: `回归测试状态: ${r.status}` };
+    }
+    case 'release_run_accepted': {
+      const row = db.prepare(`
+        SELECT id, state, verdict
+        FROM release_runs
+        WHERE req_id=? AND mode='release'
+        ORDER BY started_at DESC
+        LIMIT 1
+      `).get(reqId) as { id: string; state: string; verdict: string | null } | undefined;
+      if (!row) return { result: 'failed', detail: '没有正式发布记录' };
+      const completed = row.state === 'done' || row.state === 'completed';
+      if (completed && row.verdict === 'accepted') {
+        return { result: 'passed', detail: `正式发布已验收: ${row.id}` };
+      }
+      return { result: 'failed', detail: `最近正式发布 ${row.id} 状态=${row.state}, verdict=${row.verdict ?? '-'}` };
     }
     default:
       return { result: 'skipped', detail: `未知检查项: ${checkType}` };

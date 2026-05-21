@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { db, newId } from '../db/index.js';
 import { SignJWT, jwtVerify } from 'jose';
@@ -20,6 +20,15 @@ function parseUser(row: Record<string, unknown>): Omit<User, 'passwordHash'> {
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
+}
+
+function requireAdminIfRbacEnabled(c: Context): Response | null {
+  const rbacEnabledRow = db.prepare("SELECT value FROM settings WHERE key='security.rbacEnabled'").get() as { value: string } | undefined;
+  if (rbacEnabledRow?.value !== 'true') return null;
+  const user = c.get('user') as { role?: string } | null;
+  if (!user) return c.json({ error: 'Unauthorized', requiredRoles: ['admin'], currentRole: null }, 401);
+  if (user.role !== 'admin') return c.json({ error: 'Forbidden', requiredRoles: ['admin'], currentRole: user.role }, 403);
+  return null;
 }
 
 export async function createToken(user: { id: string; username: string; role: string }): Promise<string> {
@@ -92,6 +101,9 @@ const CreateUserSchema = z.object({
 });
 
 authRouter.post('/users', async (c) => {
+  const blocked = requireAdminIfRbacEnabled(c);
+  if (blocked) return blocked;
+
   const body = CreateUserSchema.parse(await c.req.json());
   const existing = db.prepare('SELECT id FROM users WHERE username=?').get(body.username);
   if (existing) return c.json({ error: 'username already exists' }, 409);
@@ -110,6 +122,9 @@ authRouter.post('/users', async (c) => {
 
 // GET /auth/users
 authRouter.get('/users', (c) => {
+  const blocked = requireAdminIfRbacEnabled(c);
+  if (blocked) return blocked;
+
   const rows = db.prepare('SELECT * FROM users ORDER BY created_at DESC').all() as Record<string, unknown>[];
   return c.json(rows.map(parseUser));
 });
@@ -122,6 +137,9 @@ const PatchUserSchema = z.object({
 });
 
 authRouter.patch('/users/:id', async (c) => {
+  const blocked = requireAdminIfRbacEnabled(c);
+  if (blocked) return blocked;
+
   const { id } = c.req.param();
   const body = PatchUserSchema.parse(await c.req.json());
 
@@ -148,6 +166,9 @@ authRouter.patch('/users/:id', async (c) => {
 
 // DELETE /auth/users/:id
 authRouter.delete('/users/:id', (c) => {
+  const blocked = requireAdminIfRbacEnabled(c);
+  if (blocked) return blocked;
+
   const { id } = c.req.param();
   db.prepare('DELETE FROM users WHERE id=?').run(id);
   return c.json({ ok: true });
