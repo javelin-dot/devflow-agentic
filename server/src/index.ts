@@ -25,6 +25,7 @@ import { documentsRouter } from './routes/documents.js';
 import { attachmentsRouter } from './routes/attachments.js';
 import { notificationsRouter } from './routes/notifications.js';
 import { specsRouter } from './routes/specs.js';
+import { assistantRouter } from './routes/assistant.js';
 import { authRouter } from './routes/auth.js';
 import { fsRouter } from './routes/fs.js';
 import { authGuard } from './middleware/auth.js';
@@ -61,6 +62,7 @@ app.route('/api/documents', documentsRouter);
 app.route('/api/attachments', attachmentsRouter);
 app.route('/api/notifications', notificationsRouter);
 app.route('/api/specs', specsRouter);
+app.route('/api/assistant', assistantRouter);
 
 // GET /api/runtime/state
 app.get('/api/runtime/state', (c) =>

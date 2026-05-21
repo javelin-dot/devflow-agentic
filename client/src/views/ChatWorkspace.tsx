@@ -20,7 +20,7 @@ interface EntryRowProps {
   onReject?: () => Promise<void>;
 }
 
-function EntryRow({ msg, selectMode, selected, onDelete, onApprove, onReject }: EntryRowProps) {
+function EntryRow({ msg, selectMode, selected, onSelect, onDelete, onApprove, onReject }: EntryRowProps) {
   const isUser = msg.role === 'user';
   const isToolUse = msg.entryType === 'tool_use';
   const isThinking = msg.entryType === 'thinking';
@@ -427,6 +427,8 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
       role: 'assistant',
       content: '正在生成需求 Spec...',
       entryType: 'thinking',
+      action: null,
+      status: 'running',
       createdAt: new Date().toISOString(),
     }]);
     let streamError = '';
@@ -515,6 +517,8 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
       role: 'assistant',
       content: '正在生成设计 Spec...',
       entryType: 'thinking',
+      action: null,
+      status: 'running',
       createdAt: new Date().toISOString(),
     }]);
     let streamError = '';

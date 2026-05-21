@@ -497,7 +497,7 @@ export function BoardView({ onOpenReq }: { onOpenReq?: (req: Requirement) => voi
     createReq.mutate(
       {
         title: form.title, priority: form.priority, kind: form.kind,
-        projects: form.projects.map((name, i) => ({ project: name, isPrimary: i === 0 })),
+        projects: form.projects.map((name, i) => ({ project: name, isPrimary: i === 0, devBranch: null, uatBranch: null })),
       },
       { onSuccess: () => setShowModal(false), onError: (e) => alert(`创建失败: ${e.message}`) }
     );
@@ -833,7 +833,7 @@ export function BoardView({ onOpenReq }: { onOpenReq?: (req: Requirement) => voi
               </thead>
               <tbody>
                 {filteredList.map((req) => (
-                  <ListRow key={req.id} req={req} onClick={() => setSearchParams({ req: req.id })} />
+                  <ListRow key={req.id} req={req} onClick={() => navigate(`/requirements/${req.id}`)} />
                 ))}
               </tbody>
             </table>

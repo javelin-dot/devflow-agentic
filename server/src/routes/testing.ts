@@ -155,11 +155,12 @@ testingRouter.delete('/test-plans/:id', (c) => {
 
 // ===== Test Cases =====
 
-// GET /test-cases?reqId=
+// GET /test-cases?reqId=  (reqId optional — omit to fetch all)
 testingRouter.get('/test-cases', (c) => {
   const reqId = c.req.query('reqId');
-  if (!reqId) return c.json({ error: 'reqId required' }, 400);
-  const rows = db.prepare('SELECT * FROM test_cases WHERE req_id=? ORDER BY created_at DESC').all(reqId) as Array<Record<string, unknown>>;
+  const rows = reqId
+    ? db.prepare('SELECT * FROM test_cases WHERE req_id=? ORDER BY created_at DESC').all(reqId) as Array<Record<string, unknown>>
+    : db.prepare('SELECT * FROM test_cases ORDER BY created_at DESC LIMIT 500').all() as Array<Record<string, unknown>>;
   return c.json(rows.map(parseCase));
 });
 
@@ -431,7 +432,7 @@ function saveGeneratedCases(reqId: string, cases: Array<Partial<TestCase>>, scop
   for (const tc of cases) {
     if (!tc.title || !tc.command) continue;
     const id = newId('tc');
-    const testType = (tc.testType as TestType) ?? 'functional';
+    const testType: TestType = scope === 'smoke' ? 'smoke' : ((tc.testType as TestType) ?? 'functional');
     db.prepare(
       `INSERT INTO test_cases (id, plan_id, req_id, title, description, test_type, command, expected_exit_code, status, cwd, created_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?)`
@@ -456,6 +457,18 @@ const GenerateSchema = z.object({
   scope: z.enum(['smoke', 'full']).optional().default('full'),
 });
 
+// In-memory map of active /test-cases/generate sessions for cancellation.
+const activeGenerateSessions = new Map<string, { session: { interrupt: () => void }; cancelled: boolean }>();
+
+testingRouter.post('/test-cases/generate/:sessionId/cancel', (c) => {
+  const { sessionId } = c.req.param();
+  const entry = activeGenerateSessions.get(sessionId);
+  if (!entry) return c.json({ ok: false, error: 'session not active' }, 404);
+  entry.cancelled = true;
+  try { entry.session.interrupt(); } catch { /* ignore */ }
+  return c.json({ ok: true });
+});
+
 testingRouter.post('/test-cases/generate', async (c) => {
   const body = GenerateSchema.parse(await c.req.json());
 
@@ -464,44 +477,64 @@ testingRouter.post('/test-cases/generate', async (c) => {
 
   return streamSSE(c, async (stream) => {
     const sessionId = newId('ses');
-    const agent = body.agent ?? resolveDefaultAgent();
-    const session = createAgentProcess(agent, sessionId);
-    const prompt = buildTestCasePrompt(body.reqId, body.scope);
-    let { collected, errorMsg } = await runAgentUntilDone(session, prompt, {
-      onEntry: (entry) => {
-        void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
-      },
-      onPatch: (entryId, patch) => {
-        void stream.writeSSE({ data: JSON.stringify({ type: 'patch', entryId, patch }) });
-      },
-    });
+    let registered = false;
+    try {
+      const agent = body.agent ?? resolveDefaultAgent();
+      const session = createAgentProcess(agent, sessionId);
+      const tracker = { session, cancelled: false };
+      activeGenerateSessions.set(sessionId, tracker);
+      registered = true;
 
-    if (!errorMsg && collected.length > 0) {
-      let parsed: Array<Partial<TestCase>> = [];
-      try {
-        const raw = collected.join('').trim();
-        // Remove markdown code block wrapper if present
-        const jsonStr = raw.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-        parsed = JSON.parse(jsonStr) as Array<Partial<TestCase>>;
-        if (!Array.isArray(parsed)) parsed = [];
-      } catch (e) {
-        errorMsg = `Failed to parse generated test cases: ${(e as Error).message}`;
+      await stream.writeSSE({ data: JSON.stringify({ type: 'started', sessionId, agent }) });
+
+      const prompt = buildTestCasePrompt(body.reqId, body.scope);
+      let { collected, errorMsg } = await runAgentUntilDone(session, prompt, {
+        onEntry: (entry) => {
+          void stream.writeSSE({ data: JSON.stringify({ type: 'entry', entry }) });
+        },
+        onPatch: (entryId, patch) => {
+          void stream.writeSSE({ data: JSON.stringify({ type: 'patch', entryId, patch }) });
+        },
+      });
+
+      if (tracker.cancelled) {
+        await stream.writeSSE({ data: JSON.stringify({ type: 'cancelled', message: '已取消生成' }) });
+        return;
       }
 
-      if (!errorMsg) {
-        const result = saveGeneratedCases(body.reqId, parsed, body.scope);
-        await stream.writeSSE({ data: JSON.stringify({ type: 'done', planId: result.planId, count: result.count }) });
+      if (!errorMsg && collected.length > 0) {
+        let parsed: Array<Partial<TestCase>> = [];
+        try {
+          const raw = collected.join('').trim();
+          // Remove markdown code block wrapper if present
+          const jsonStr = raw.replace(/^```json\s*/, '').replace(/\s*```$/, '');
+          parsed = JSON.parse(jsonStr) as Array<Partial<TestCase>>;
+          if (!Array.isArray(parsed)) parsed = [];
+        } catch (e) {
+          errorMsg = `Failed to parse generated test cases: ${(e as Error).message}`;
+        }
 
-        // Record event
-        const evtId = newId('evt');
-        db.prepare(
-          `INSERT INTO events (id, req_id, type, payload, actor, created_at) VALUES (?,?,?,?,?,?)`
-        ).run(evtId, body.reqId, 'test_cases_generated', JSON.stringify({ scope: body.scope, count: result.count, planId: result.planId }), 'system', new Date().toISOString());
+        if (!errorMsg) {
+          const result = saveGeneratedCases(body.reqId, parsed, body.scope);
+          await stream.writeSSE({ data: JSON.stringify({ type: 'done', planId: result.planId, count: result.count }) });
+
+          // Record event
+          const evtId = newId('evt');
+          db.prepare(
+            `INSERT INTO events (id, req_id, type, payload, actor, created_at) VALUES (?,?,?,?,?,?)`
+          ).run(evtId, body.reqId, 'test_cases_generated', JSON.stringify({ scope: body.scope, count: result.count, planId: result.planId }), 'system', new Date().toISOString());
+        }
+      } else if (!errorMsg && collected.length === 0) {
+        errorMsg = 'Agent 没有返回内容，请检查 Agent 是否可用';
       }
-    }
 
-    if (errorMsg) {
-      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: errorMsg }) });
+      if (errorMsg) {
+        await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: errorMsg }) });
+      }
+    } catch (e) {
+      await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: (e as Error).message || String(e) }) });
+    } finally {
+      if (registered) activeGenerateSessions.delete(sessionId);
     }
   });
 });

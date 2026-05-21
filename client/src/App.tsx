@@ -11,12 +11,12 @@ import { ReleaseView } from './views/ReleaseView';
 import { QuickPublishPanel } from './views/QuickPublishPanel';
 import { LogsView } from './views/LogsView';
 import { TestDashboard } from './views/TestDashboard';
-import { DefectListPanel } from './views/DefectListPanel';
 import { DashboardView } from './views/DashboardView';
 import { ArchiveView } from './views/ArchiveView';
 import { SettingsView } from './views/SettingsView';
 import { LoginView } from './views/LoginView';
 import { TerminalPanel } from './views/TerminalPanel';
+import { AiAssistantView } from './views/AiAssistantView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastContainer } from './components/ui';
 import { OnboardingWizard } from './components/OnboardingWizard';
@@ -82,10 +82,7 @@ function AppLayout() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
-      <NavSidebar
-        aiPanelOpen={aiPanel.open}
-        onToggleAiPanel={() => setAiPanel(p => ({ ...p, open: !p.open }))}
-      />
+      <NavSidebar />
       <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         <Routes>
           <Route path="/" element={<Navigate to="/board" replace />} />
@@ -98,11 +95,12 @@ function AppLayout() {
           <Route path="/release" element={<ErrorBoundary viewName="发布"><ReleaseView /></ErrorBoundary>} />
           <Route path="/quickpublish" element={<ErrorBoundary viewName="Jenkins"><QuickPublishPanel /></ErrorBoundary>} />
           <Route path="/logs" element={<ErrorBoundary viewName="日志"><LogsView /></ErrorBoundary>} />
-          <Route path="/testing" element={<ErrorBoundary viewName="测试"><TestDashboard /></ErrorBoundary>} />
-          <Route path="/defects" element={<ErrorBoundary viewName="缺陷"><DefectListPanel /></ErrorBoundary>} />
+          <Route path="/testing" element={<ErrorBoundary viewName="测试与缺陷"><TestDashboard /></ErrorBoundary>} />
+          <Route path="/defects" element={<Navigate to="/testing" replace />} />
           <Route path="/dashboard" element={<ErrorBoundary viewName="仪表板"><DashboardView /></ErrorBoundary>} />
           <Route path="/settings" element={<ErrorBoundary viewName="设置"><SettingsView onRerunOnboarding={() => setShowOnboarding(true)} /></ErrorBoundary>} />
           <Route path="/terminal" element={<ErrorBoundary viewName="终端"><TerminalPanel /></ErrorBoundary>} />
+          <Route path="/assistant" element={<ErrorBoundary viewName="AI 助手"><AiAssistantView /></ErrorBoundary>} />
           <Route path="/login" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

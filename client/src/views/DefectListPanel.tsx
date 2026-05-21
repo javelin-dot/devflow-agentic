@@ -19,13 +19,14 @@ const STATUS_COLORS: Record<DefectStatus, string> = {
   wont_fix: 'var(--text-tertiary)',
 };
 
-const STATUS_LABELS: Record<DefectStatus, string> = {
+export const DEFECT_STATUS_LABELS: Record<DefectStatus, string> = {
   pending_confirm: '待确认',
   to_fix: '待修复',
   to_regress: '待回归',
   closed: '已关闭',
   wont_fix: '不处理',
 };
+const STATUS_LABELS = DEFECT_STATUS_LABELS;
 
 const STATUS_TRANSITIONS: Record<DefectStatus, Array<{ status: DefectStatus; label: string }>> = {
   pending_confirm: [
@@ -83,7 +84,7 @@ interface NewDefectFormProps {
   onCancel: () => void;
 }
 
-function NewDefectForm({ reqId, onCreated, onCancel }: NewDefectFormProps) {
+export function NewDefectForm({ reqId, onCreated, onCancel }: NewDefectFormProps) {
   const [title, setTitle] = useState('');
   const [severity, setSeverity] = useState<DefectSeverity>('P2');
   const [description, setDescription] = useState('');
@@ -146,7 +147,7 @@ interface DefectRowProps {
   defect: Defect;
 }
 
-function DefectRow({ defect }: DefectRowProps) {
+export function DefectRow({ defect }: DefectRowProps) {
   const [expanded, setExpanded] = useState(false);
   const patchDefect = usePatchDefect();
   const assignAgent = useAssignAgentFix();

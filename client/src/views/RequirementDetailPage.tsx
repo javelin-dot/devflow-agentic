@@ -58,7 +58,7 @@ function ProjectSelector({ req }: { req: Requirement }) {
       : [...req.projects, { project: name, isPrimary: req.projects.length === 0, devBranch: null, uatBranch: null }];
     setSaving(true);
     patchReq.mutate(
-      { id: req.id, patch: { projects: next.map((p, i) => ({ project: p.project, isPrimary: i === 0 })) } },
+      { id: req.id, patch: { projects: next.map((p, i) => ({ project: p.project, isPrimary: i === 0, devBranch: p.devBranch ?? null, uatBranch: p.uatBranch ?? null })) } },
       { onSettled: () => setSaving(false) }
     );
   };

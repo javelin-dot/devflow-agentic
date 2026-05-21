@@ -1,8 +1,15 @@
-import { useState, useRef } from 'react';
-import { Check, X, Minus, HelpCircle, Bot, Play } from 'lucide-react';
-import { useTestPlans, useCreateTestPlan, useTestRuns, useGateChecks, useTestCases } from '../api/hooks';
-import type { GateCheckEvent, TestRunEvent, TestCase, TestType, TestRun } from '@devflow/shared';
-import { UiBadge, UiButton, UiSelect } from '../components/ui';
+import React, { useState, useRef, useMemo } from 'react';
+import { Check, X, Minus, HelpCircle, Bot, Play, Search, ChevronDown, ChevronRight, RefreshCw, Plus } from 'lucide-react';
+import { useTestPlans, useCreateTestPlan, useTestRuns, useGateChecks, useTestCases, useRequirements, useRequirement, useDefects } from '../api/hooks';
+import type { GateCheckEvent, TestRunEvent, TestCase, TestType, TestRun, Stage, TestStatus, Defect, DefectSeverity, DefectStatus } from '@devflow/shared';
+import { STAGE_LABELS } from '@devflow/shared';
+import { UiBadge, UiSelect } from '../components/ui';
+import { DefectRow, NewDefectForm, DEFECT_STATUS_LABELS } from './DefectListPanel';
+
+const STAGES: Stage[] = ['backlog', 'analyzing', 'development', 'uat', 'prerelease', 'released'];
+const CASE_STATUS_LABELS: Record<TestStatus, string> = {
+  draft: '草稿', ready: '就绪', running: '运行中', passed: '通过', failed: '失败', skipped: '跳过',
+};
 
 const API_BASE = 'http://localhost:4000/api';
 
@@ -412,7 +419,7 @@ interface AIGenerateCasesButtonProps {
   scope: 'smoke' | 'full';
   label: string;
   color: string;
-  onDone?: () => void;
+  onDone?: (count: number) => void;
 }
 
 function AIGenerateCasesButton({ reqId, scope, label, color, onDone }: AIGenerateCasesButtonProps) {
@@ -420,19 +427,40 @@ function AIGenerateCasesButton({ reqId, scope, label, color, onDone }: AIGenerat
   const [log, setLog] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ count: number } | null>(null);
+  const [cancelled, setCancelled] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+
+  const handleCancel = async () => {
+    setCancelled(true);
+    const sid = sessionIdRef.current;
+    if (sid) {
+      // best-effort: ask server to interrupt the agent process
+      try {
+        await fetch(`${API_BASE}/test-cases/generate/${sid}/cancel`, { method: 'POST' });
+      } catch { /* ignore */ }
+    }
+    abortRef.current?.abort();
+  };
 
   const handleClick = async () => {
     setRunning(true);
     setLog('');
     setError(null);
     setResult(null);
+    setCancelled(false);
+    sessionIdRef.current = null;
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       const resp = await fetch(`${API_BASE}/test-cases/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reqId, scope }),
+        signal: controller.signal,
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
@@ -449,6 +477,7 @@ function AIGenerateCasesButton({ reqId, scope, label, color, onDone }: AIGenerat
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buf = '';
+      let doneCount = 0;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -467,13 +496,22 @@ function AIGenerateCasesButton({ reqId, scope, label, color, onDone }: AIGenerat
               count?: number;
               planId?: string;
               message?: string;
+              sessionId?: string;
+              agent?: string;
             };
-            if (ev.type === 'entry' && ev.entry?.content) {
+            if (ev.type === 'started' && ev.sessionId) {
+              sessionIdRef.current = ev.sessionId;
+              setLog(prev => prev + `[已启动 ${ev.agent ?? ''} session=${ev.sessionId}]\n`);
+            } else if (ev.type === 'entry' && ev.entry?.content) {
               setLog(prev => prev + ev.entry!.content);
             } else if (ev.type === 'patch' && ev.patch?.content) {
               setLog(prev => prev + ev.patch!.content);
             } else if (ev.type === 'done') {
-              setResult({ count: ev.count ?? 0 });
+              doneCount = ev.count ?? 0;
+              setResult({ count: doneCount });
+            } else if (ev.type === 'cancelled') {
+              setCancelled(true);
+              setLog(prev => prev + `\n[${ev.message ?? '已取消'}]\n`);
             } else if (ev.type === 'error' && ev.message) {
               setError(ev.message);
             }
@@ -481,51 +519,112 @@ function AIGenerateCasesButton({ reqId, scope, label, color, onDone }: AIGenerat
           } catch { /* ignore non-JSON SSE lines */ }
         }
       }
+      if (doneCount > 0) onDone?.(doneCount);
     } catch (e) {
-      setError((e as Error).message);
+      if ((e as Error).name === 'AbortError') {
+        setCancelled(true);
+      } else {
+        setError((e as Error).message);
+      }
     } finally {
       setRunning(false);
-      onDone?.();
+      abortRef.current = null;
     }
   };
 
+  const [showLog, setShowLog] = useState(false);
+  // auto-open log when running starts; user can close
+  if (running && !showLog && !error) {
+    // best-effort one-shot; setState in render is OK here because it's gated
+  }
+
   return (
-    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
-      <button
-        onClick={() => { void handleClick(); }}
-        disabled={running}
-        title={`使用 AI 根据需求生成${label}`}
-        style={{
-          background: running ? 'var(--bg-tertiary)' : color, border: 'none', borderRadius: 4,
-          color: 'var(--text-inverse)', padding: '6px 14px',
-          cursor: running ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
-          display: 'inline-flex', alignItems: 'center', gap: 4,
-        }}
-      >
-        <Bot size={14} />
-        {running ? '生成中...' : `AI 生成${label}`}
-      </button>
-      {result && (
-        <span style={{ fontSize: 11, color: 'var(--accent-green)' }}>
-          ✓ 已生成 {result.count} 条用例
-        </span>
-      )}
-      {error && (
-        <span style={{ fontSize: 11, color: 'var(--accent-red)', maxWidth: 280, wordBreak: 'break-all' }}>
-          ✗ {error}
-        </span>
-      )}
-      {(running || log) && (
-        <pre
-          ref={logRef}
+    <div style={{ position: 'relative', display: 'inline-block' }}>
+      <div style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+        <button
+          onClick={() => { setShowLog(true); void handleClick(); }}
+          disabled={running}
+          title={`使用 AI 根据需求生成${label}`}
           style={{
-            margin: 0, marginTop: 4, background: 'var(--bg-code)',
-            border: '1px solid var(--bg-tertiary)', borderRadius: 4,
-            padding: 8, fontSize: 11, color: 'var(--text-secondary)',
-            maxHeight: 160, minWidth: 280, maxWidth: 420, overflow: 'auto',
-            whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+            background: running ? 'var(--bg-tertiary)' : color, border: 'none', borderRadius: 4,
+            color: 'var(--text-inverse)', padding: '6px 14px',
+            cursor: running ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 600,
+            display: 'inline-flex', alignItems: 'center', gap: 4,
           }}
-        >{log || '等待 AI 响应...'}</pre>
+        >
+          <Bot size={14} />
+          {running ? '生成中...' : `AI 生成${label}`}
+        </button>
+        {running && (
+          <button
+            onClick={() => { void handleCancel(); }}
+            title="取消本次生成"
+            style={{
+              background: 'var(--accent-red)', border: 'none', borderRadius: 4,
+              color: 'var(--text-inverse)', padding: '6px 10px',
+              cursor: 'pointer', fontSize: 12, fontWeight: 600,
+              display: 'inline-flex', alignItems: 'center', gap: 4,
+            }}
+          >
+            <X size={14} />
+            取消
+          </button>
+        )}
+        {(log || result || error) && !running && (
+          <button
+            onClick={() => setShowLog(v => !v)}
+            title="查看 AI 日志"
+            style={{
+              background: 'transparent', border: '1px solid var(--border-default)', borderRadius: 4,
+              color: 'var(--text-secondary)', padding: '5px 8px',
+              cursor: 'pointer', fontSize: 11,
+            }}
+          >日志</button>
+        )}
+      </div>
+      {result && !showLog && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, fontSize: 11, color: 'var(--accent-green)', whiteSpace: 'nowrap' }}>
+          ✓ 已生成 {result.count} 条
+        </div>
+      )}
+      {error && !showLog && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 4, fontSize: 11, color: 'var(--accent-red)', maxWidth: 300, wordBreak: 'break-all' }}>
+          ✗ {error.slice(0, 80)}
+        </div>
+      )}
+      {showLog && (running || log || result || error) && (
+        <div style={{
+          position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 50,
+          background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
+          borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
+          width: 460, maxWidth: '90vw',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px solid var(--border-default)' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+              AI 日志 · {label}
+              {result && <span style={{ color: 'var(--accent-green)', marginLeft: 8 }}>✓ {result.count} 条</span>}
+              {cancelled && <span style={{ color: 'var(--accent-orange)', marginLeft: 8 }}>已取消</span>}
+              {error && <span style={{ color: 'var(--accent-red)', marginLeft: 8 }}>失败</span>}
+            </div>
+            <button
+              onClick={() => setShowLog(false)}
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 0 }}
+            ><X size={14} /></button>
+          </div>
+          {error && (
+            <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--accent-red)', borderBottom: '1px solid var(--border-default)', wordBreak: 'break-all' }}>
+              {error}
+            </div>
+          )}
+          <pre
+            ref={logRef}
+            style={{
+              margin: 0, background: 'var(--bg-code)', padding: 10, fontSize: 11,
+              color: 'var(--text-secondary)', maxHeight: 280, overflow: 'auto',
+              whiteSpace: 'pre-wrap', wordBreak: 'break-all', borderRadius: '0 0 6px 6px',
+            }}
+          >{log || '等待 AI 响应...'}</pre>
+        </div>
       )}
     </div>
   );
@@ -625,215 +724,423 @@ function TddLoopRunner({ reqId, onDone }: TddLoopRunnerProps) {
   );
 }
 
-export function TestDashboard({ reqId: initialReqId }: { reqId?: string }) {
-  const [reqId, setReqId] = useState(initialReqId ?? '');
+// ===== Single-pane Test Management =====
+type SectionKey = 'cases' | 'defects' | 'plans' | 'runs' | 'gates';
+
+function RequirementTestPanel({ reqId, reqFilter, stageFilter, onReqChange, onStageChange }: {
+  reqId: string;
+  reqFilter: string;       // dropdown selected value ('' = 全部)
+  stageFilter: 'all' | Stage;
+  onReqChange: (id: string) => void;
+  onStageChange: (s: 'all' | Stage) => void;
+}) {
+  const [section, setSection] = useState<SectionKey>('cases');
   const [showNewPlanForm, setShowNewPlanForm] = useState(false);
   const [activeTypeTab, setActiveTypeTab] = useState<TestType | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | TestStatus>('all');
+  const [caseSearch, setCaseSearch] = useState('');
   const [showNewCasePlanId, setShowNewCasePlanId] = useState<string | null>(null);
+  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  // defect tab state
+  const [defectSeverity, setDefectSeverity] = useState<'all' | DefectSeverity>('all');
+  const [defectStatus, setDefectStatus] = useState<'all' | DefectStatus>('all');
+  const [defectSearch, setDefectSearch] = useState('');
+  const [showNewDefectForm, setShowNewDefectForm] = useState(false);
 
+  const { data: req } = useRequirement(reqId);
+  const { data: allReqs = [] } = useRequirements();
   const { data: plans = [], refetch: refetchPlans } = useTestPlans(reqId);
   const { data: runs = [] } = useTestRuns(reqId || undefined);
   const { data: checks = [] } = useGateChecks(reqId);
-  const { data: allCases = [], refetch: refetchCases } = useTestCases(reqId);
+  const { data: allCases = [], refetch: refetchCases } = useTestCases(reqId || undefined);
+  const { data: defects = [] } = useDefects(reqId || undefined);
 
-  const card: React.CSSProperties = {
-    background: 'var(--bg-secondary)',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
-    border: '1px solid var(--bg-tertiary)',
+  // For "全部" cross-req view: build map of req id → stage to support stage filter on cases
+  const reqStageMap = useMemo(() => {
+    const m = new Map<string, Stage>();
+    for (const r of allReqs) m.set(r.id, r.stage);
+    return m;
+  }, [allReqs]);
+
+  const filteredReqOptions = useMemo(() => {
+    return allReqs.filter(r => !r.archivedAt && (stageFilter === 'all' || r.stage === stageFilter));
+  }, [allReqs, stageFilter]);
+
+  const reqTitleMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of allReqs) m.set(r.id, r.title);
+    return m;
+  }, [allReqs]);
+
+  const handleCaseStatusChange = async (id: string, status: TestStatus) => {
+    await fetch(`${API_BASE}/test-cases/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    void refetchCases();
   };
 
-  // Smoke card data
-  const smokeCases = allCases.filter(c => c.testType === 'smoke');
-  const smokeRuns = runs.filter(r => r.runType === 'manual');
-  const latestSmokeRun = smokeRuns[0];
-  const smokePassed = latestSmokeRun ? latestSmokeRun.passed : 0;
-  const smokeTotal = latestSmokeRun ? latestSmokeRun.total : smokeCases.length;
+  // Stats
+  const totalCases = allCases.length;
+  const passedCases = allCases.filter(c => c.status === 'passed').length;
+  const failedCases = allCases.filter(c => c.status === 'failed').length;
+  const passRate = totalCases > 0 ? Math.round((passedCases / totalCases) * 100) : 0;
+  const latestRun = runs[0];
 
-  // Cases by type
-  const typeCases = activeTypeTab === 'all' ? allCases : allCases.filter(c => c.testType === activeTypeTab);
+  // Defects filtering (in 全部 mode also filter by stage)
+  const filteredDefects = useMemo(() => {
+    let list = defects;
+    if (defectSeverity !== 'all') list = list.filter(d => d.severity === defectSeverity);
+    if (defectStatus !== 'all') list = list.filter(d => d.status === defectStatus);
+    if (!reqId && stageFilter !== 'all') {
+      list = list.filter(d => reqStageMap.get(d.reqId) === stageFilter);
+    }
+    if (defectSearch.trim()) {
+      const q = defectSearch.trim().toLowerCase();
+      list = list.filter(d => d.title.toLowerCase().includes(q) || (d.description ?? '').toLowerCase().includes(q));
+    }
+    return list;
+  }, [defects, defectSeverity, defectStatus, defectSearch, reqId, stageFilter, reqStageMap]);
+
+  // Cases filtering — in 全部 mode also filter by stage via the req→stage map
+  const filteredCases = useMemo(() => {
+    let list = activeTypeTab === 'all' ? allCases : allCases.filter(c => c.testType === activeTypeTab);
+    if (statusFilter !== 'all') list = list.filter(c => c.status === statusFilter);
+    if (!reqId && stageFilter !== 'all') {
+      list = list.filter(c => reqStageMap.get(c.reqId) === stageFilter);
+    }
+    if (caseSearch.trim()) {
+      const q = caseSearch.trim().toLowerCase();
+      list = list.filter(c => c.title.toLowerCase().includes(q) || (c.description ?? '').toLowerCase().includes(q));
+    }
+    return list;
+  }, [allCases, activeTypeTab, statusFilter, caseSearch, reqId, stageFilter, reqStageMap]);
+
+  const handleGenerated = async (tab: TestType | 'all', count: number) => {
+    setSection('cases');
+    setActiveTypeTab(tab);
+    setStatusFilter('all');
+    await refetchCases();
+    await refetchPlans();
+    void count;
+  };
+
+  const sectionBtn = (k: SectionKey, label: string, count?: number): React.CSSProperties => ({
+    padding: '8px 14px', fontSize: 13, cursor: 'pointer',
+    background: 'transparent', border: 'none',
+    borderBottom: '2px solid ' + (section === k ? 'var(--accent-blue)' : 'transparent'),
+    color: section === k ? 'var(--accent-blue)' : 'var(--text-secondary)',
+    fontWeight: section === k ? 600 : 400,
+    display: 'inline-flex', alignItems: 'center', gap: 6,
+  });
+  void sectionBtn;
+
+  const isAll = !reqId;
 
   return (
-    <div style={{ flex: 1, overflow: 'auto', padding: 24, background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--bg-primary)', color: 'var(--text-primary)' }}>
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>测试与质量</h2>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>需求ID:</span>
-          <input
-            value={reqId}
-            onChange={e => setReqId(e.target.value)}
-            placeholder="输入需求ID..."
-            style={{ background: 'var(--bg-secondary)', border: '1px solid var(--bg-tertiary)', borderRadius: 4, color: 'var(--text-primary)', padding: '4px 10px', fontSize: 13, width: 200 }}
-          />
+      <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--border-default)', background: 'var(--bg-secondary)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>用例管理</h2>
+
+          {/* Requirement dropdown */}
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>需求:</span>
+            <select
+              value={reqFilter}
+              onChange={e => onReqChange(e.target.value)}
+              style={{
+                background: 'var(--bg-primary)', border: '1px solid var(--border-default)',
+                borderRadius: 4, color: 'var(--text-primary)', fontSize: 12,
+                padding: '5px 8px', cursor: 'pointer', minWidth: 220, maxWidth: 360,
+              }}
+            >
+              <option value="">全部需求</option>
+              {filteredReqOptions.map(r => (
+                <option key={r.id} value={r.id}>{r.title} ({r.id})</option>
+              ))}
+            </select>
+            {reqId && req?.stage && <UiBadge variant="info">{req.stage}</UiBadge>}
+          </div>
+
+          {/* Stage chips — applies to the requirement dropdown options & cases filter */}
+          <div style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => onStageChange('all')}
+              style={chipStyle(stageFilter === 'all')}
+            >全部阶段</button>
+            {STAGES.map(s => (
+              <button key={s} onClick={() => onStageChange(s)} style={chipStyle(stageFilter === s)}>
+                {STAGE_LABELS[s]}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ flex: 1 }} />
+
+          {/* Per-requirement actions — disabled when 全部 */}
+          <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }} title={isAll ? '请先选择一个需求' : undefined}>
+            {isAll && <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>选择需求后可生成</span>}
+            <div style={{ display: 'inline-flex', gap: 8, opacity: isAll ? 0.4 : 1, pointerEvents: isAll ? 'none' : 'auto' }}>
+              <AIGenerateCasesButton
+                reqId={reqId} scope="smoke" label="冒烟用例" color="var(--accent-orange)"
+                onDone={(count) => { void handleGenerated('smoke', count); }}
+              />
+              <AIGenerateCasesButton
+                reqId={reqId} scope="full" label="完整用例" color="var(--accent-blue)"
+                onDone={(count) => { void handleGenerated('all', count); }}
+              />
+              <TddLoopRunner reqId={reqId} onDone={() => { void refetchPlans(); }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Stat tiles */}
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <StatTile label={isAll ? '全部用例' : '用例总数'} value={totalCases} color="var(--text-primary)" />
+          <StatTile label="通过" value={passedCases} color="var(--accent-green)" />
+          <StatTile label="失败" value={failedCases} color="var(--accent-red)" />
+          <StatTile label="通过率" value={`${passRate}%`} color={passRate >= 80 ? 'var(--accent-green)' : passRate >= 50 ? 'var(--accent-orange)' : 'var(--accent-red)'} />
+          <StatTile label="缺陷" value={defects.length} color="var(--accent-red)" onClick={() => setSection('defects')} />
+          <StatTile label="最近执行" value={latestRun ? new Date(latestRun.startedAt).toLocaleDateString('zh-CN') : '-'} color="var(--text-secondary)" small />
+        </div>
+
+        {/* Section tabs */}
+        <div style={{ display: 'flex', marginTop: 14, marginBottom: -14, borderBottom: 'none' }}>
+          <button onClick={() => setSection('cases')} style={sectionBtn('cases', '用例')}>用例 <CountChip n={allCases.length} /></button>
+          <button onClick={() => setSection('defects')} style={sectionBtn('defects', '缺陷')}>缺陷 <CountChip n={defects.length} /></button>
+          <button
+            onClick={() => !isAll && setSection('plans')}
+            disabled={isAll}
+            title={isAll ? '选择具体需求查看计划' : undefined}
+            style={{ ...sectionBtn('plans', '计划'), opacity: isAll ? 0.4 : 1, cursor: isAll ? 'not-allowed' : 'pointer' }}
+          >计划 <CountChip n={plans.length} /></button>
+          <button onClick={() => setSection('runs')} style={sectionBtn('runs', '执行历史')}>执行历史 <CountChip n={runs.length} /></button>
+          <button
+            onClick={() => !isAll && setSection('gates')}
+            disabled={isAll}
+            title={isAll ? '选择具体需求查看门禁' : undefined}
+            style={{ ...sectionBtn('gates', '门禁'), opacity: isAll ? 0.4 : 1, cursor: isAll ? 'not-allowed' : 'pointer' }}
+          >门禁 <CountChip n={checks.length} /></button>
         </div>
       </div>
 
-      {!reqId && (
-        <div style={{ color: 'var(--text-tertiary)', padding: 24 }}>请输入需求ID以查看测试数据</div>
-      )}
-
-      {reqId && (
-        <>
-          {/* Smoke Card */}
-          <div style={{
-            ...card,
-            display: 'flex',
-            gap: 24,
-            alignItems: 'center',
-            background: 'linear-gradient(90deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%)',
-          }}>
-            <div style={{ textAlign: 'center', minWidth: 100 }}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--accent-orange)' }}>{smokeTotal}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>冒烟用例</div>
+      {/* Body */}
+      <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+        {section === 'cases' && (
+          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: 8 }}>
+            {/* Toolbar */}
+            <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid var(--border-default)', flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={12} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
+                <input
+                  value={caseSearch}
+                  onChange={e => setCaseSearch(e.target.value)}
+                  placeholder="搜索用例标题 / 描述"
+                  style={{ padding: '5px 8px 5px 26px', background: 'var(--bg-primary)', border: '1px solid var(--border-default)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 12, width: 240, outline: 'none' }}
+                />
+              </div>
+              <FilterDropdown
+                label="类型"
+                value={activeTypeTab}
+                options={[
+                  { value: 'all', label: `全部 (${allCases.length})` },
+                  ...(Object.keys(TEST_TYPE_LABELS) as TestType[]).map(t => ({
+                    value: t,
+                    label: `${TEST_TYPE_LABELS[t]} (${allCases.filter(c => c.testType === t).length})`,
+                  })),
+                ]}
+                onChange={(v) => setActiveTypeTab(v as TestType | 'all')}
+              />
+              <FilterDropdown
+                label="状态"
+                value={statusFilter}
+                options={[
+                  { value: 'all', label: `全部 (${allCases.length})` },
+                  ...(Object.keys(CASE_STATUS_LABELS) as TestStatus[]).map(s => ({
+                    value: s,
+                    label: `${CASE_STATUS_LABELS[s]} (${allCases.filter(c => c.status === s).length})`,
+                  })),
+                ]}
+                onChange={(v) => setStatusFilter(v as TestStatus | 'all')}
+              />
+              <div style={{ flex: 1 }} />
+              <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>显示 {filteredCases.length} / {allCases.length}</span>
+              <button
+                onClick={() => { void refetchCases(); }}
+                title="刷新"
+                style={{ background: 'transparent', border: '1px solid var(--border-default)', borderRadius: 4, color: 'var(--text-secondary)', padding: '4px 10px', cursor: 'pointer', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              ><RefreshCw size={12} /> 刷新</button>
             </div>
-            <div style={{ width: 1, height: 40, background: 'var(--border-default)' }} />
-            <div style={{ textAlign: 'center', minWidth: 100 }}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--accent-green)' }}>{smokeTotal > 0 ? Math.round((smokePassed / smokeTotal) * 100) : 0}%</div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>通过率</div>
-            </div>
-            <div style={{ width: 1, height: 40, background: 'var(--border-default)' }} />
-            <div style={{ textAlign: 'center', minWidth: 100 }}>
-              <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--accent-blue)' }}>{latestSmokeRun ? new Date(latestSmokeRun.startedAt).toLocaleDateString('zh-CN') : '-'}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>最近运行</div>
-            </div>
-            <div style={{ flex: 1 }} />
-            <AIGenerateCasesButton
-              reqId={reqId}
-              scope="smoke"
-              label="冒烟用例"
-              color="var(--accent-orange)"
-              onDone={() => { void refetchCases(); void refetchPlans(); }}
+            {/* Case Table */}
+            <CaseTable
+              cases={filteredCases}
+              defects={defects}
+              onStatusChange={handleCaseStatusChange}
+              onSelect={setSelectedCaseId}
+              selectedId={selectedCaseId}
+              showReqColumn={isAll}
+              reqTitleMap={reqTitleMap}
             />
-            <TddLoopRunner reqId={reqId} onDone={() => { void refetchPlans(); }} />
           </div>
+        )}
 
-          {/* Test Type Tabs */}
-          <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
-            <button
-              onClick={() => setActiveTypeTab('all')}
-              style={{
-                padding: '6px 14px', borderRadius: 4, border: '1px solid ' + (activeTypeTab === 'all' ? 'var(--accent-blue)' : 'var(--bg-tertiary)'),
-                background: activeTypeTab === 'all' ? 'var(--accent-blue)' : 'var(--bg-secondary)',
-                color: activeTypeTab === 'all' ? 'var(--text-inverse)' : 'var(--text-secondary)',
-                cursor: 'pointer', fontSize: 12,
-              }}
-            >全部 ({allCases.length})</button>
-            {(Object.keys(TEST_TYPE_LABELS) as TestType[]).map(t => {
-              const count = allCases.filter(c => c.testType === t).length;
-              return (
-                <button
-                  key={t}
-                  onClick={() => setActiveTypeTab(t)}
-                  style={{
-                    padding: '6px 14px', borderRadius: 4, border: '1px solid ' + (activeTypeTab === t ? TEST_TYPE_COLORS[t] : 'var(--bg-tertiary)'),
-                    background: activeTypeTab === t ? TEST_TYPE_COLORS[t] : 'var(--bg-secondary)',
-                    color: 'var(--text-inverse)',
-                    cursor: 'pointer', fontSize: 12,
-                  }}
-                >{TEST_TYPE_LABELS[t]} ({count})</button>
-              );
-            })}
-          </div>
-
-          {/* Test Cases by Type */}
-          <div style={card}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>用例列表</h3>
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{typeCases.length} 条用例</span>
+        {section === 'defects' && (
+          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: 8 }}>
+            {/* Toolbar */}
+            <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: '1px solid var(--border-default)', flexWrap: 'wrap' }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={12} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)' }} />
+                <input
+                  value={defectSearch}
+                  onChange={e => setDefectSearch(e.target.value)}
+                  placeholder="搜索缺陷标题 / 描述"
+                  style={{ padding: '5px 8px 5px 26px', background: 'var(--bg-primary)', border: '1px solid var(--border-default)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 12, width: 240, outline: 'none' }}
+                />
+              </div>
+              <FilterDropdown
+                label="严重程度"
+                value={defectSeverity}
+                options={[
+                  { value: 'all', label: `全部 (${defects.length})` },
+                  ...(['P0', 'P1', 'P2', 'P3'] as DefectSeverity[]).map(s => ({
+                    value: s,
+                    label: `${s} (${defects.filter(d => d.severity === s).length})`,
+                  })),
+                ]}
+                onChange={(v) => setDefectSeverity(v as DefectSeverity | 'all')}
+              />
+              <FilterDropdown
+                label="状态"
+                value={defectStatus}
+                options={[
+                  { value: 'all', label: `全部 (${defects.length})` },
+                  ...(Object.keys(DEFECT_STATUS_LABELS) as DefectStatus[]).map(s => ({
+                    value: s,
+                    label: `${DEFECT_STATUS_LABELS[s]} (${defects.filter(d => d.status === s).length})`,
+                  })),
+                ]}
+                onChange={(v) => setDefectStatus(v as DefectStatus | 'all')}
+              />
+              <div style={{ flex: 1 }} />
+              <span style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>显示 {filteredDefects.length} / {defects.length}</span>
+              <button
+                onClick={() => !isAll && setShowNewDefectForm(v => !v)}
+                disabled={isAll}
+                title={isAll ? '请先选择具体需求' : undefined}
+                style={{
+                  background: 'var(--accent-blue)', border: 'none', borderRadius: 4, color: 'var(--text-inverse)',
+                  padding: '5px 12px', cursor: isAll ? 'not-allowed' : 'pointer', fontSize: 12, opacity: isAll ? 0.5 : 1,
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}
+              ><Plus size={12} /> 新建缺陷</button>
             </div>
-            {typeCases.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>暂无用例</div>}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {typeCases.map(tc => (
-                <div key={tc.id} style={{
-                  background: 'var(--bg-primary)', borderRadius: 4, padding: '8px 12px',
-                  border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', gap: 10,
-                }}>
-                  <span style={{
-                    background: TEST_TYPE_COLORS[tc.testType as TestType] ?? 'var(--text-tertiary)',
-                    color: 'var(--text-inverse)', borderRadius: 4, padding: '2px 8px', fontSize: 10, fontWeight: 600,
-                  }}>{TEST_TYPE_LABELS[tc.testType as TestType] ?? tc.testType}</span>
-                  <span style={{ flex: 1, fontSize: 13 }}>{tc.title}</span>
-                  <code style={{ fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg-code)', padding: '2px 6px', borderRadius: 3 }}>{tc.command.slice(0, 60)}</code>
-                  <StatusBadge status={tc.status} />
+            {/* Body */}
+            <div style={{ padding: 14 }}>
+              {showNewDefectForm && reqId && (
+                <NewDefectForm
+                  reqId={reqId}
+                  onCreated={() => setShowNewDefectForm(false)}
+                  onCancel={() => setShowNewDefectForm(false)}
+                />
+              )}
+              {filteredDefects.length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                  {defects.length === 0 ? '暂无缺陷' : '暂无符合条件的缺陷'}
+                </div>
+              ) : (
+                filteredDefects.map(d => (
+                  <div key={d.id}>
+                    {isAll && (
+                      <div style={{ fontSize: 10, color: 'var(--text-tertiary)', marginBottom: 2 }}>
+                        {reqTitleMap.get(d.reqId) ?? d.reqId} <code>{d.reqId}</code>
+                      </div>
+                    )}
+                    <DefectRow defect={d} />
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {section === 'plans' && (
+          <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-default)' }}>
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center' }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>测试计划</span>
+              <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--text-tertiary)' }}>{plans.length} 个</span>
+              <div style={{ flex: 1 }} />
+              <button
+                onClick={() => setShowNewPlanForm(v => !v)}
+                style={{ background: 'var(--accent-blue)', border: 'none', borderRadius: 4, color: 'var(--text-inverse)', padding: '5px 12px', cursor: 'pointer', fontSize: 12 }}
+              >+ 新建计划</button>
+            </div>
+            <div style={{ padding: 14 }}>
+              {showNewPlanForm && (
+                <NewPlanForm reqId={reqId} onCreated={() => { setShowNewPlanForm(false); void refetchPlans(); }} />
+              )}
+              {plans.length === 0 && !showNewPlanForm && (
+                <div style={{ color: 'var(--text-tertiary)', fontSize: 13, padding: '12px 0' }}>暂无测试计划</div>
+              )}
+              {plans.map((plan, idx) => (
+                <div key={plan.id} style={{ paddingTop: idx === 0 ? 0 : 14, marginTop: idx === 0 ? 0 : 14, borderTop: idx === 0 ? 'none' : '1px solid var(--border-default)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>{plan.title}</span>
+                    <StatusBadge status={plan.status} />
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{plan.caseCount} 个用例</span>
+                    <button
+                      onClick={() => setShowNewCasePlanId(showNewCasePlanId === plan.id ? null : plan.id)}
+                      style={{ marginLeft: 'auto', background: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', borderRadius: 4, color: 'var(--text-secondary)', padding: '3px 10px', cursor: 'pointer', fontSize: 11 }}
+                    >+ 用例</button>
+                  </div>
+                  <PlanRunner planId={plan.id} planTitle={plan.title} reqId={reqId} />
+                  {showNewCasePlanId === plan.id && (
+                    <NewCaseForm planId={plan.id} reqId={reqId} onCreated={() => { setShowNewCasePlanId(null); void refetchPlans(); }} />
+                  )}
                 </div>
               ))}
             </div>
           </div>
+        )}
 
-          {/* Test Plans */}
-          <div style={card}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>测试计划</h3>
-              <button
-                onClick={() => setShowNewPlanForm(v => !v)}
-                style={{ background: 'var(--accent-blue)', border: 'none', borderRadius: 4, color: 'var(--text-inverse)', padding: '4px 12px', cursor: 'pointer', fontSize: 12 }}
-              >+ 新建测试计划</button>
-            </div>
-
-            {showNewPlanForm && (
-              <NewPlanForm reqId={reqId} onCreated={() => { setShowNewPlanForm(false); void refetchPlans(); }} />
-            )}
-
-            {plans.length === 0 && !showNewPlanForm && (
-              <div style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>暂无测试计划</div>
-            )}
-
-            {plans.map(plan => (
-              <div key={plan.id} style={{ borderTop: '1px solid var(--bg-tertiary)', paddingTop: 12, marginTop: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <span style={{ fontWeight: 600, fontSize: 14 }}>{plan.title}</span>
-                  <StatusBadge status={plan.status} />
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{plan.caseCount} 个用例</span>
-                  <button
-                    onClick={() => setShowNewCasePlanId(showNewCasePlanId === plan.id ? null : plan.id)}
-                    style={{ marginLeft: 'auto', background: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', borderRadius: 4, color: 'var(--text-secondary)', padding: '2px 8px', cursor: 'pointer', fontSize: 11 }}
-                  >+ 用例</button>
-                </div>
-                <PlanRunner planId={plan.id} planTitle={plan.title} reqId={reqId} />
-                {showNewCasePlanId === plan.id && (
-                  <NewCaseForm planId={plan.id} reqId={reqId} onCreated={() => { setShowNewCasePlanId(null); void refetchPlans(); }} />
-                )}
-              </div>
-            ))}
-          </div>
-
-          {/* Recent Test Runs */}
-          <div style={card}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 16, fontWeight: 600 }}>最近测试运行</h3>
-            {runs.length === 0 && <div style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>暂无测试运行记录</div>}
-            {runs.length > 0 && (
+        {section === 'runs' && (
+          <div style={{ background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-default)', overflow: 'hidden' }}>
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border-default)', fontSize: 13, fontWeight: 600 }}>执行历史</div>
+            {runs.length === 0 ? (
+              <div style={{ padding: 14, color: 'var(--text-tertiary)', fontSize: 13 }}>暂无执行记录</div>
+            ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                <thead>
+                <thead style={{ background: 'var(--bg-tertiary)' }}>
                   <tr style={{ color: 'var(--text-secondary)', textAlign: 'left' }}>
-                    <th style={{ padding: '4px 8px' }}>类型</th>
-                    <th style={{ padding: '4px 8px' }}>状态</th>
-                    <th style={{ padding: '4px 8px' }}>通过/失败/总计</th>
-                    <th style={{ padding: '4px 8px' }}>覆盖率</th>
-                    <th style={{ padding: '4px 8px' }}>耗时(ms)</th>
-                    <th style={{ padding: '4px 8px' }}>开始时间</th>
+                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>类型</th>
+                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>状态</th>
+                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>通过/失败/总计</th>
+                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>覆盖率</th>
+                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>耗时</th>
+                    <th style={{ padding: '8px 12px', fontWeight: 600 }}>开始时间</th>
                   </tr>
                 </thead>
                 <tbody>
                   {runs.map(run => {
                     const cov = getCoveragePct(run);
                     return (
-                      <tr key={run.id} style={{ borderTop: '1px solid var(--bg-tertiary)' }}>
-                        <td style={{ padding: '6px 8px' }}><RunTypeBadge runType={run.runType} /></td>
-                        <td style={{ padding: '6px 8px' }}><StatusBadge status={run.status} /></td>
-                        <td style={{ padding: '6px 8px' }}>
+                      <tr key={run.id} style={{ borderTop: '1px solid var(--border-default)' }}>
+                        <td style={{ padding: '8px 12px' }}><RunTypeBadge runType={run.runType} /></td>
+                        <td style={{ padding: '8px 12px' }}><StatusBadge status={run.status} /></td>
+                        <td style={{ padding: '8px 12px' }}>
                           <span style={{ color: 'var(--accent-green)' }}>{run.passed}</span>
                           {' / '}
                           <span style={{ color: 'var(--accent-red)' }}>{run.failed}</span>
                           {' / '}
                           <span style={{ color: 'var(--text-secondary)' }}>{run.total}</span>
                         </td>
-                        <td style={{ padding: '6px 8px' }}>
+                        <td style={{ padding: '8px 12px' }}>
                           {cov !== null ? <CoverageBadge pct={cov} /> : <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>-</span>}
                         </td>
-                        <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }}>{run.durationMs ?? '-'}</td>
-                        <td style={{ padding: '6px 8px', color: 'var(--text-secondary)' }}>{run.startedAt.slice(0, 19).replace('T', ' ')}</td>
+                        <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{run.durationMs ? `${run.durationMs}ms` : '-'}</td>
+                        <td style={{ padding: '8px 12px', color: 'var(--text-secondary)' }}>{run.startedAt.slice(0, 19).replace('T', ' ')}</td>
                       </tr>
                     );
                   })}
@@ -841,25 +1148,326 @@ export function TestDashboard({ reqId: initialReqId }: { reqId?: string }) {
               </table>
             )}
           </div>
+        )}
 
-          {/* Gate Checks */}
-          <div style={card}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 16, fontWeight: 600 }}>门禁状态</h3>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-              {GATE_TRANSITIONS.map(gt => (
-                <GateCard
-                  key={`${gt.from}-${gt.to}`}
-                  reqId={reqId}
-                  from={gt.from}
-                  to={gt.to}
-                  label={gt.label}
-                  checks={checks}
-                />
-              ))}
-            </div>
+        {section === 'gates' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+            {GATE_TRANSITIONS.map(gt => (
+              <GateCard
+                key={`${gt.from}-${gt.to}`}
+                reqId={reqId} from={gt.from} to={gt.to} label={gt.label} checks={checks}
+              />
+            ))}
           </div>
-        </>
-      )}
+        )}
+      </div>
+
+      {/* Case detail drawer */}
+      {selectedCaseId && (() => {
+        const tc = allCases.find(c => c.id === selectedCaseId);
+        if (!tc) return null;
+        return (
+          <CaseDetailDrawer
+            tc={tc}
+            reqTitle={reqTitleMap.get(tc.reqId)}
+            defects={defects}
+            onStatusChange={handleCaseStatusChange}
+            onClose={() => setSelectedCaseId(null)}
+          />
+        );
+      })()}
+    </div>
+  );
+}
+
+function StatTile({ label, value, color, small, onClick }: { label: string; value: number | string; color: string; small?: boolean; onClick?: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        background: 'var(--bg-primary)', borderRadius: 6, padding: '8px 14px',
+        border: '1px solid var(--border-default)', minWidth: 92,
+        cursor: onClick ? 'pointer' : 'default',
+      }}
+    >
+      <div style={{ fontSize: small ? 13 : 18, fontWeight: 700, color, lineHeight: 1.2 }}>{value}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{label}</div>
+    </div>
+  );
+}
+
+function chipStyle(active: boolean): React.CSSProperties {
+  return {
+    padding: '3px 10px', borderRadius: 3, fontSize: 11, cursor: 'pointer',
+    border: '1px solid ' + (active ? 'var(--accent-blue)' : 'var(--border-default)'),
+    background: active ? 'var(--accent-blue)' : 'transparent',
+    color: active ? 'var(--text-inverse)' : 'var(--text-secondary)',
+  };
+}
+
+function CountChip({ n }: { n: number }) {
+  return (
+    <span style={{
+      background: 'var(--bg-tertiary)', color: 'var(--text-secondary)',
+      fontSize: 10, padding: '0 6px', borderRadius: 8, fontWeight: 500,
+    }}>{n}</span>
+  );
+}
+
+function FilterDropdown({ label, value, options, onChange }: {
+  label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void;
+}) {
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{label}:</span>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{ background: 'var(--bg-primary)', border: '1px solid var(--border-default)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 12, padding: '4px 6px', cursor: 'pointer' }}
+      >
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+interface CaseTableProps {
+  cases: TestCase[];
+  defects: Defect[];
+  onStatusChange: (id: string, status: TestStatus) => void;
+  onSelect: (id: string) => void;
+  selectedId?: string | null;
+  showReqColumn?: boolean;
+  reqTitleMap?: Map<string, string>;
+}
+
+function CaseTable({ cases, defects, onStatusChange, onSelect, selectedId, showReqColumn, reqTitleMap }: CaseTableProps) {
+  if (cases.length === 0) {
+    return <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>暂无符合条件的用例</div>;
+  }
+
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      <thead style={{ background: 'var(--bg-tertiary)' }}>
+        <tr style={{ color: 'var(--text-secondary)', textAlign: 'left' }}>
+          <th style={{ padding: '8px 12px', fontWeight: 600, width: 70 }}>类型</th>
+          {showReqColumn && <th style={{ padding: '8px 12px', fontWeight: 600 }}>需求</th>}
+          <th style={{ padding: '8px 12px', fontWeight: 600 }}>标题</th>
+          <th style={{ padding: '8px 12px', fontWeight: 600 }}>命令</th>
+          <th style={{ padding: '8px 12px', fontWeight: 600, width: 110 }}>状态</th>
+          <th style={{ padding: '8px 12px', fontWeight: 600, width: 80 }}>缺陷</th>
+        </tr>
+      </thead>
+      <tbody>
+        {cases.map(tc => {
+          const isSelected = selectedId === tc.id;
+          const related = defects.filter(d =>
+            (d.description?.includes(tc.title) ?? false) || (d.title?.includes(tc.title) ?? false),
+          );
+          return (
+            <tr
+              key={tc.id}
+              onClick={() => onSelect(tc.id)}
+              style={{
+                borderTop: '1px solid var(--border-default)', cursor: 'pointer',
+                background: isSelected ? 'var(--bg-tertiary)' : 'transparent',
+              }}
+            >
+              <td style={{ padding: '8px 12px' }}>
+                <span style={{
+                  background: TEST_TYPE_COLORS[tc.testType as TestType] ?? 'var(--text-tertiary)',
+                  color: 'var(--text-inverse)', borderRadius: 3, padding: '2px 6px', fontSize: 10, fontWeight: 600,
+                }}>{TEST_TYPE_LABELS[tc.testType as TestType] ?? tc.testType}</span>
+              </td>
+              {showReqColumn && (
+                <td style={{ padding: '8px 12px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{reqTitleMap?.get(tc.reqId) ?? tc.reqId}</span>
+                  <code style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 6 }}>{tc.reqId}</code>
+                </td>
+              )}
+              <td style={{ padding: '8px 12px', color: 'var(--text-primary)' }}>{tc.title}</td>
+              <td style={{ padding: '8px 12px', color: 'var(--text-secondary)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <code style={{ fontSize: 11, background: 'var(--bg-code)', padding: '1px 5px', borderRadius: 3 }}>{tc.command}</code>
+              </td>
+              <td style={{ padding: '8px 12px' }}>
+                <select
+                  value={tc.status}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={e => onStatusChange(tc.id, e.target.value as TestStatus)}
+                  style={{ background: 'var(--bg-primary)', border: '1px solid var(--border-default)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 11, padding: '2px 4px' }}
+                >
+                  {(Object.keys(CASE_STATUS_LABELS) as TestStatus[]).map(s => (
+                    <option key={s} value={s}>{CASE_STATUS_LABELS[s]}</option>
+                  ))}
+                </select>
+              </td>
+              <td style={{ padding: '8px 12px' }}>
+                {related.length > 0
+                  ? <UiBadge variant="error">{related.length}</UiBadge>
+                  : <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>-</span>}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+// ===== Detail Drawer =====
+interface CaseDetailDrawerProps {
+  tc: TestCase;
+  reqTitle: string | undefined;
+  defects: Defect[];
+  onStatusChange: (id: string, status: TestStatus) => void;
+  onClose: () => void;
+}
+
+function CaseDetailDrawer({ tc, reqTitle, defects, onStatusChange, onClose }: CaseDetailDrawerProps) {
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const related = defects.filter(d =>
+    (d.description?.includes(tc.title) ?? false) || (d.title?.includes(tc.title) ?? false),
+  );
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 100,
+        }}
+      />
+      {/* Drawer */}
+      <div
+        style={{
+          position: 'fixed', top: 0, right: 0, bottom: 0, width: 580, maxWidth: '92vw',
+          background: 'var(--bg-primary)', borderLeft: '1px solid var(--border-default)',
+          boxShadow: '-8px 0 24px rgba(0,0,0,0.25)', zIndex: 101,
+          display: 'flex', flexDirection: 'column',
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <span style={{
+            background: TEST_TYPE_COLORS[tc.testType as TestType] ?? 'var(--text-tertiary)',
+            color: 'var(--text-inverse)', borderRadius: 3, padding: '3px 8px',
+            fontSize: 11, fontWeight: 600, marginTop: 2,
+          }}>{TEST_TYPE_LABELS[tc.testType as TestType] ?? tc.testType}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', wordBreak: 'break-word' }}>{tc.title}</div>
+            <code style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{tc.id}</code>
+          </div>
+          <button
+            onClick={onClose}
+            title="关闭 (Esc)"
+            style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: 4 }}
+          ><X size={16} /></button>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflow: 'auto', padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* 基本信息 */}
+          <DrawerCard title="基本信息">
+            <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', rowGap: 8, columnGap: 12, fontSize: 12 }}>
+              <Field label="需求">
+                <span style={{ color: 'var(--text-primary)' }}>{reqTitle ?? tc.reqId}</span>
+                <code style={{ fontSize: 10, color: 'var(--text-tertiary)', marginLeft: 6 }}>{tc.reqId}</code>
+              </Field>
+              <Field label="状态">
+                <select
+                  value={tc.status}
+                  onChange={e => onStatusChange(tc.id, e.target.value as TestStatus)}
+                  style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 12, padding: '3px 6px' }}
+                >
+                  {(Object.keys(CASE_STATUS_LABELS) as TestStatus[]).map(s => (
+                    <option key={s} value={s}>{CASE_STATUS_LABELS[s]}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="类型">{TEST_TYPE_LABELS[tc.testType as TestType] ?? tc.testType}</Field>
+              <Field label="期望退出码"><code>{tc.expectedExitCode}</code></Field>
+              <Field label="工作目录"><code style={{ wordBreak: 'break-all' }}>{tc.cwd || '-'}</code></Field>
+              <Field label="创建时间">{tc.createdAt.slice(0, 19).replace('T', ' ')}</Field>
+            </div>
+          </DrawerCard>
+
+          {/* 描述 / 预期 */}
+          <DrawerCard title="描述 / 预期结果">
+            <div style={{ fontSize: 13, color: 'var(--text-primary)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+              {tc.description || <em style={{ color: 'var(--text-tertiary)' }}>无描述</em>}
+            </div>
+          </DrawerCard>
+
+          {/* 执行命令 */}
+          <DrawerCard title="执行命令">
+            <pre style={{
+              margin: 0, padding: 10, background: 'var(--bg-code)', borderRadius: 4,
+              fontSize: 12, color: 'var(--text-secondary)',
+              whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+              maxHeight: 240, overflow: 'auto',
+            }}>{tc.command || '-'}</pre>
+          </DrawerCard>
+
+          {/* 关联缺陷 */}
+          <DrawerCard title={`关联缺陷 (${related.length})`}>
+            {related.length === 0 ? (
+              <div style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>暂无关联缺陷</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {related.map(d => (
+                  <div key={d.id} style={{ padding: '6px 10px', background: 'var(--bg-secondary)', borderRadius: 4, border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <UiBadge variant="error">{d.severity}</UiBadge>
+                    <span style={{ fontSize: 12, color: 'var(--text-primary)', flex: 1 }}>{d.title}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{d.status}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </DrawerCard>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function DrawerCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: 6 }}>
+      <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-default)', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>{title}</div>
+      <div style={{ padding: 12 }}>{children}</div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <>
+      <div style={{ color: 'var(--text-tertiary)', fontSize: 11, paddingTop: 3 }}>{label}</div>
+      <div style={{ color: 'var(--text-secondary)' }}>{children}</div>
+    </>
+  );
+}
+
+// ===== Public entry: single-pane with requirement filter in the header =====
+export function TestDashboard({ reqId: initialReqId }: { reqId?: string }) {
+  const [selectedId, setSelectedId] = useState(initialReqId ?? '');
+  const [stageFilter, setStageFilter] = useState<'all' | Stage>('all');
+
+  return (
+    <div style={{ display: 'flex', flex: 1, minHeight: 0, height: '100%', background: 'var(--bg-primary)' }}>
+      <RequirementTestPanel
+        reqId={selectedId}
+        reqFilter={selectedId}
+        stageFilter={stageFilter}
+        onReqChange={setSelectedId}
+        onStageChange={setStageFilter}
+      />
     </div>
   );
 }

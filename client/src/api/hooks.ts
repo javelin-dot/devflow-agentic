@@ -410,11 +410,10 @@ export function useGateChecks(reqId: string) {
   });
 }
 
-export function useTestCases(reqId: string) {
+export function useTestCases(reqId?: string) {
   return useQuery<TestCase[]>({
-    queryKey: ['test-cases', reqId],
-    queryFn: () => apiFetch<TestCase[]>(`/test-cases?reqId=${reqId}`),
-    enabled: !!reqId,
+    queryKey: ['test-cases', reqId ?? '__all__'],
+    queryFn: () => apiFetch<TestCase[]>(`/test-cases${reqId ? `?reqId=${reqId}` : ''}`),
   });
 }
 
@@ -495,9 +494,9 @@ export interface AiDefaultConfig {
   model: string | null;
 }
 
-export interface SettingsData extends Record<string, string> {
+export type SettingsData = Record<string, string> & {
   aiDefaultConfig?: AiDefaultConfig;
-}
+};
 
 export function useSettings() {
   return useQuery<SettingsData>({
@@ -789,4 +788,3 @@ export function useVerifyProduction() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['release-runs'] }),
   });
 }
-
