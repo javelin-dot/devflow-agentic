@@ -10,12 +10,12 @@ DevFlow is an **agent-first requirement lifecycle management platform**. Require
 
 ## Monorepo Structure
 
-npm workspaces: `client` (React SPA), `server` (Hono API), `shared` (TypeScript types).
+npm workspaces: `client` (React SPA), `shared` (TypeScript types).
 
 - `harness/` — Agent execution contracts (architecture, spec format, domain model, API protocol, stage gates, test contract, playbook). **Authority source for agent behavior.**
 - `specs/` — Milestone YAML specs (M0–M5). Validate with `node harness/tools/validate-spec.mjs`.
 - `doc/` — Product docs; `PRD-SPEC-v2.md` is the single source of truth for product design.
-- `server/src/routes/` — 17+ Hono route modules; `server/src/db/` — SQLite schema + bootstrap migration.
+- `server-py/` — FastAPI backend with PostgreSQL, pgvector, MinIO, Redis.
 - `client/src/views/` — Page-level React components; `client/src/api/` — TanStack Query hooks.
 - `shared/src/index.ts` — All shared types (Stage enum, Requirement, Project, ChatSession, etc.).
 
@@ -28,27 +28,22 @@ npm install
 # Development (frontend http://localhost:5173, backend http://localhost:4000)
 npm run dev
 
-# Build all workspaces (shared → server → client)
+# Build workspaces (shared → client)
 npm run build
 
-# Backend only / frontend only
-npm run dev --workspace=server
+# Frontend only
 npm run dev --workspace=client
 
 # Type check
-cd server && npx tsc --noEmit
 cd client && npx tsc --noEmit
 
 # Validate a milestone spec
 node harness/tools/validate-spec.mjs specs/M1-core-flow.yaml
-
-# Direct DB access
-sqlite3 server/data/devflow.db
 ```
 
 ## Architecture Notes
 
-**Backend**: Hono framework with better-sqlite3 (WAL mode). DB schema runs `bootstrap()` on startup — no separate migration command. All agent-initiated side effects must be logged via `POST /api/events` with `actor=agent`.
+**Backend**: FastAPI with SQLAlchemy async ORM, PostgreSQL with pgvector, MinIO for blob storage, Redis for caching/events. Alembic handles migrations.
 
 **Frontend**: React 18 + Vite + TanStack Query + Zustand. API base is `http://localhost:4000/api`.
 

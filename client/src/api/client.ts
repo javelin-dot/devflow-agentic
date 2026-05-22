@@ -24,8 +24,15 @@ export async function apiFetch<T>(
     throw new Error('Unauthorized');
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error((err as { error?: string }).error ?? res.statusText);
+    const body = (await res.json().catch(() => null)) as
+      | { error?: string | { code?: string; message?: string }; detail?: string }
+      | null;
+    const err = body?.error;
+    const msg =
+      typeof err === 'string'
+        ? err
+        : err?.message ?? body?.detail ?? res.statusText;
+    throw new Error(msg);
   }
   return res.json() as Promise<T>;
 }

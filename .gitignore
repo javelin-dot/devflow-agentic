@@ -54,5 +54,17 @@ bun.lock.json
 bun.lock.yaml
 bun.lock.json
 
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
 .cursor/
 .qoder/

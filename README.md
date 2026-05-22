@@ -35,11 +35,10 @@ open http://localhost:5173
 
 ## 技术栈
 
-- **Runtime**: Node.js 20+
-- **后端**: Hono + better-sqlite3 (SQLite WAL) + Zod
+- **Runtime**: Node.js 20+ (frontend), Python 3.12+ (backend)
+- **后端**: FastAPI + SQLAlchemy async + PostgreSQL (pgvector) + MinIO + Redis
 - **前端**: React 18 + TypeScript + Vite + TanStack Query + Zustand
 - **Agent 适配**: Claude Code (stream-json) + OpenAI 兼容 API
-- **Git 操作**: simple-git
 - **Monorepo**: npm workspaces
 
 ## 项目结构
@@ -51,12 +50,11 @@ dev-flow-agentein/
 │   ├── src/components/  # 共享组件（NavSidebar、ErrorBoundary 等）
 │   ├── src/api/         # API 客户端 + React Query hooks
 │   └── src/hooks/       # 自定义 hooks
-├── server/              # 后端 HTTP 服务
-│   ├── src/routes/      # Hono 路由（每模块一文件）
-│   ├── src/services/    # 业务逻辑（Git、分析、发布等）
-│   ├── src/agents/      # Agent 适配器 + SessionManager
-│   ├── src/db/          # SQLite schema + bootstrap 迁移
-│   └── src/utils/       # 工具函数
+├── server-py/           # FastAPI 后端
+│   ├── src/devflow/modules/   # 业务模块（auth、requirement、document、agent 等）
+│   ├── src/devflow/core/      # 核心基础设施（DB、RBAC、存储、事件）
+│   ├── alembic/               # 数据库迁移
+│   └── pyproject.toml         # Python 依赖
 ├── shared/              # 共享类型定义
 │   └── src/index.ts     # Stage、Requirement、SubTask 等类型
 ├── harness/             # Agent 执行规范与契约
