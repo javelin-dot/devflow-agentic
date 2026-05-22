@@ -6,9 +6,12 @@ import { createAgentProcess } from '../agents/SessionManager.js';
 import { resolveDefaultAgent } from '../agents/resolveDefaultAgent.js';
 import { runAgentUntilDone } from '../agents/agentRunner.js';
 import { notificationDispatcher } from '../services/notificationDispatcher.js';
+import { summarizeMarkdown } from '../services/specSummarize.js';
 import type { NormalizedEntry } from '@devflow/shared';
 
 export const specsRouter = new Hono();
+
+const SPEC_SUMMARY_MAX_CHARS = 8000;
 
 // Resolve the primary project working directory for a requirement
 function resolveProjectCwd(reqId: string): string | undefined {
@@ -83,8 +86,19 @@ function buildDesignPrompt(reqId: string, reqDocId?: string, cwd?: string): stri
     if (doc) reqContent = doc.content;
   }
   if (!reqContent) {
+    // Auto-load latest approved/draft PRD so design always sees what the requirement spec actually says
+    const latest = db.prepare(
+      `SELECT content FROM documents
+       WHERE req_id=? AND type='requirement_spec' AND deleted_at IS NULL
+       ORDER BY updated_at DESC LIMIT 1`
+    ).get(reqId) as { content: string } | undefined;
+    if (latest) reqContent = latest.content;
+  }
+  if (!reqContent) {
     reqContent = `${req.title}\n${req.description ?? ''}`;
   }
+
+  const reqSummary = summarizeMarkdown(reqContent, SPEC_SUMMARY_MAX_CHARS);
 
   let prompt = `# Design Spec Generation Task\n\n`;
   if (cwd) {
@@ -92,7 +106,7 @@ function buildDesignPrompt(reqId: string, reqDocId?: string, cwd?: string): stri
     prompt += `You are working in the project repository located at: \`${cwd}\`.\n`;
     prompt += `All file paths and git commands are relative to this directory unless specified otherwise.\n\n`;
   }
-  prompt += `## Source Requirement\n${reqContent}\n\n`;
+  prompt += `## Source Requirement (summarized — headings preserved, acceptance/feature/api/data sections kept verbatim)\n${reqSummary}\n\n`;
   prompt += `## Instructions\n`;
   prompt += `Generate a structured Development Design Spec in Markdown format with the following sections:\n`;
   prompt += `1. Business Flow (describe in Mermaid diagram syntax within a \`\`\`mermaid code block)\n`;

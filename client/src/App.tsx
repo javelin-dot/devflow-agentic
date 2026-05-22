@@ -149,7 +149,7 @@ function AppLayout() {
                 display: 'flex', alignItems: 'center', padding: '0 16px', gap: 8,
                 justifyContent: 'space-between',
               }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>研发助手</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>AI 助手</span>
                 <button
                   onClick={() => setAiPanel({ open: false, req: null })}
                   style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', padding: 4, borderRadius: 4 }}
@@ -181,7 +181,7 @@ function AppLayout() {
                     }}>
                       <div style={{ fontSize: 24 }}>↙</div>
                       <div style={{ fontSize: 13, fontWeight: 500, color: '#6B7280' }}>将需求卡片拖拽到此处</div>
-                      <div style={{ fontSize: 11, color: '#98A2B3' }}>或右键卡片 → 研发助手</div>
+                      <div style={{ fontSize: 11, color: '#98A2B3' }}>或右键卡片 → AI 助手</div>
                     </div>
                   </>
                 )}

@@ -257,7 +257,7 @@ export function RequirementDetailModal({ req, onClose, onOpenAI }: Props) {
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
           >
-            <Bot size={13} />研发助手
+            <Bot size={13} />AI 助手
           </button>
         )}
       </div>

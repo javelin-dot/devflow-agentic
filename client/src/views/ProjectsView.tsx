@@ -60,6 +60,16 @@ export function ProjectsView() {
               </button>
             </div>
             <div style={{ color: 'var(--text-tertiary)', fontSize: 11, marginTop: 4 }}>{p.path}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
+              <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>分支前缀:</span>
+              <input
+                key={p.name + '-prefix'}
+                defaultValue={p.branchPrefix ?? ''}
+                placeholder="feature"
+                onBlur={e => patchMut.mutate({ name: p.name, patch: { branchPrefix: e.target.value || null } })}
+                style={{ padding: '2px 6px', background: 'var(--bg-primary)', border: '1px solid var(--border-default)', borderRadius: 3, color: 'var(--text-primary)', fontSize: 11, width: 90 }}
+              />
+            </div>
 
             {editing === p.name && (
               <div style={{ marginTop: 12, padding: 12, background: 'var(--bg-primary)', borderRadius: 4 }}>

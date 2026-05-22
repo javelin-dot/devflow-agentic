@@ -879,7 +879,7 @@ export function BoardView({ onOpenReq }: { onOpenReq?: (req: Requirement) => voi
             onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-tertiary)'; }}
             onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
           >
-            <Bot size={14} />研发助手
+            <Bot size={14} />AI 助手
           </button>
           <div style={{ height: 1, background: 'var(--bg-tertiary)', margin: '3px 0' }} />
           <button

@@ -98,6 +98,15 @@ export function useDeleteProject() {
   });
 }
 
+export function useProjectBranches(projectName: string | null) {
+  return useQuery<string[]>({
+    queryKey: ['project-branches', projectName],
+    queryFn: () => apiFetch<string[]>(`/projects/${encodeURIComponent(projectName!)}/branches`),
+    enabled: !!projectName,
+    staleTime: 30_000,
+  });
+}
+
 export interface FsLsResult {
   path: string;
   parent: string | null;

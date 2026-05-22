@@ -194,7 +194,7 @@ const QUICK_CHIP: React.CSSProperties = {
 
 type OutputMode = 'chat' | 'spec' | 'design' | 'tasks';
 
-function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAutoPromptConsumed, initialMode }: {
+function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAutoPromptConsumed, panelMode }: {
   session: ChatSession;
   reqId: string;
   req: Requirement;
@@ -202,7 +202,7 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
   onOpenPanel: (panel: 'spec' | 'design' | 'tasks' | 'analysis') => void;
   autoPrompt?: string;
   onAutoPromptConsumed?: () => void;
-  initialMode?: OutputMode;
+  panelMode?: boolean;
 }) {
   const { data: messages = [], refetch } = useMessages(session.id);
   const { data: attachmentsData } = useAttachmentsV2(reqId);
@@ -414,10 +414,7 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
     await runAgent(fullPrompt);
   };
 
-  const showAnalysis = req.stage === 'analyzing' || req.stage === 'backlog';
-  const showTasks = req.stage === 'development' || req.stage === 'uat' || req.stage === 'prerelease' || req.stage === 'released' || req.stage === 'analyzing';
-
-  const [mode, setMode] = useState<OutputMode>(initialMode ?? 'chat');
+  const [mode, setMode] = useState<OutputMode>('chat');
 
   const runGenerateSpec = async () => {
     if (running) return;
@@ -620,58 +617,56 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
     await sendMessage();
   };
 
-  const toggleMode = (next: 'chat' | 'spec' | 'design' | 'tasks') => {
-    setMode(prev => prev === next ? 'chat' : next);
-  };
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Header */}
-      <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 14 }}>{session.title || session.agent}</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{session.agent}</span>
-          {running && (
-            <button
-              onClick={handleStop}
-              style={{ fontSize: 11, padding: '3px 10px', borderRadius: 4, border: '1px solid var(--accent-red-44)', background: 'var(--diff-del-bg)', color: 'var(--accent-red)', cursor: 'pointer' }}
-            >
-              停止
-            </button>
-          )}
-          {selectMode ? (
-            <>
+      {/* Header — hidden in panelMode */}
+      {!panelMode && (
+        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          <span style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 14 }}>{session.title || session.agent}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{session.agent}</span>
+            {running && (
               <button
-                onClick={handleDeleteSelected}
-                disabled={selectedIds.size === 0 || deleteMsgs.isPending}
-                style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--accent-red-44)', background: 'var(--diff-del-bg)', color: 'var(--accent-red)', cursor: selectedIds.size === 0 ? 'not-allowed' : 'pointer' }}
+                onClick={handleStop}
+                style={{ fontSize: 11, padding: '3px 10px', borderRadius: 4, border: '1px solid var(--accent-red-44)', background: 'var(--diff-del-bg)', color: 'var(--accent-red)', cursor: 'pointer' }}
               >
-                删除 ({selectedIds.size})
+                停止
               </button>
+            )}
+            {selectMode ? (
+              <>
+                <button
+                  onClick={handleDeleteSelected}
+                  disabled={selectedIds.size === 0 || deleteMsgs.isPending}
+                  style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--accent-red-44)', background: 'var(--diff-del-bg)', color: 'var(--accent-red)', cursor: selectedIds.size === 0 ? 'not-allowed' : 'pointer' }}
+                >
+                  删除 ({selectedIds.size})
+                </button>
+                <button
+                  onClick={() => { setSelectMode(false); setSelectedIds(new Set()); }}
+                  style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border-default)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer' }}
+                >
+                  取消
+                </button>
+              </>
+            ) : (
               <button
-                onClick={() => { setSelectMode(false); setSelectedIds(new Set()); }}
+                onClick={() => setSelectMode(true)}
                 style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border-default)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer' }}
               >
-                取消
+                选择
               </button>
-            </>
-          ) : (
-            <button
-              onClick={() => setSelectMode(true)}
-              style={{ fontSize: 11, padding: '3px 8px', borderRadius: 4, border: '1px solid var(--border-default)', background: 'var(--bg-secondary)', color: 'var(--text-secondary)', cursor: 'pointer' }}
-            >
-              选择
+            )}
+            <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+              <X size={16} />
             </button>
-          )}
-          <button onClick={onClose} style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-            <X size={16} />
-          </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Messages */}
       <div style={{ flex: 1, overflowY: 'auto' }}>
-        <div style={{ maxWidth: 800, margin: '0 auto', padding: '16px 20px' }}>
+        <div style={panelMode ? { padding: '12px' } : { maxWidth: 800, margin: '0 auto', padding: '16px 20px' }}>
           {allMsgs.map(m => {
             const groupIds = msgGroupMap.get(m.id) ?? [m.id];
             const isGroupParent = groupIds[0] === m.id && groupIds.length > 1;
@@ -717,8 +712,19 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
       </div>
 
       {/* Input */}
-      <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border-default)', flexShrink: 0 }}>
-        <div style={{ maxWidth: 800, margin: '0 auto' }}>
+      <div style={{ padding: panelMode ? '12px' : '16px 20px', borderTop: '1px solid var(--border-default)', flexShrink: 0 }}>
+        <div style={panelMode ? {} : { maxWidth: 800, margin: '0 auto' }}>
+          {panelMode && running && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>生成中...</span>
+              <button
+                onClick={handleStop}
+                style={{ fontSize: 11, padding: '2px 10px', borderRadius: 4, border: '1px solid var(--accent-red-44)', background: 'var(--diff-del-bg)', color: 'var(--accent-red)', cursor: 'pointer' }}
+              >
+                停止
+              </button>
+            </div>
+          )}
           {attachmentFiles.length > 0 && (
             <div style={{ marginBottom: 10, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {attachmentFiles.map((f: { filename: string; id: string }) => {
@@ -747,7 +753,7 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
             </div>
           )}
 
-          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: 16, padding: '12px 16px', boxShadow: 'var(--shadow-sm)' }}>
+          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: panelMode ? 6 : 16, padding: panelMode ? '7px 10px' : '12px 16px', boxShadow: panelMode ? undefined : 'var(--shadow-sm)' }}>
             <textarea
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
@@ -760,62 +766,14 @@ function ChatPanel({ session, reqId, req, onClose, onOpenPanel, autoPrompt, onAu
                 fontFamily: 'inherit', lineHeight: 1.5,
               }}
             />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {showAnalysis && (
-                  <button onClick={() => onOpenPanel('analysis')} style={QUICK_CHIP} onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }} onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}>
-                    <GitBranch size={11} />分析方案
-                  </button>
-                )}
-                <button
-                  onClick={() => toggleMode('spec')}
-                  style={{
-                    ...QUICK_CHIP,
-                    borderColor: mode === 'spec' ? 'var(--accent-blue)' : 'var(--border-default)',
-                    color: mode === 'spec' ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                    background: mode === 'spec' ? 'var(--accent-blue-10)' : 'transparent',
-                  }}
-                  onMouseEnter={e => { if (mode !== 'spec') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}}
-                  onMouseLeave={e => { if (mode !== 'spec') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}}
-                >
-                  <FileText size={11} />生成需求Spec
-                </button>
-                <button
-                  onClick={() => toggleMode('design')}
-                  style={{
-                    ...QUICK_CHIP,
-                    borderColor: mode === 'design' ? 'var(--accent-blue)' : 'var(--border-default)',
-                    color: mode === 'design' ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                    background: mode === 'design' ? 'var(--accent-blue-10)' : 'transparent',
-                  }}
-                  onMouseEnter={e => { if (mode !== 'design') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}}
-                  onMouseLeave={e => { if (mode !== 'design') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}}
-                >
-                  <BookOpen size={11} />生成设计Spec
-                </button>
-                {showTasks && (
-                  <button
-                    onClick={() => toggleMode('tasks')}
-                    style={{
-                      ...QUICK_CHIP,
-                      borderColor: mode === 'tasks' ? 'var(--accent-blue)' : 'var(--border-default)',
-                      color: mode === 'tasks' ? 'var(--accent-blue)' : 'var(--text-secondary)',
-                      background: mode === 'tasks' ? 'var(--accent-blue-10)' : 'transparent',
-                    }}
-                    onMouseEnter={e => { if (mode !== 'tasks') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}}
-                    onMouseLeave={e => { if (mode !== 'tasks') { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}}
-                  >
-                    <ListChecks size={11} />任务进度
-                  </button>
-                )}
-              </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginTop: 8 }}>
               <button
                 onClick={handleSend}
-                disabled={running || (mode === 'chat' && !prompt.trim())}
+                disabled={running || !prompt.trim()}
                 style={{
                   width: 32, height: 32, borderRadius: '50%', border: 'none',
-                  background: running || (mode === 'chat' && !prompt.trim()) ? 'var(--bg-disabled)' : 'var(--accent-blue)',
-                  color: 'var(--text-inverse)', cursor: running || (mode === 'chat' && !prompt.trim()) ? 'not-allowed' : 'pointer',
+                  background: running || !prompt.trim() ? 'var(--bg-disabled)' : 'var(--accent-blue)',
+                  color: 'var(--text-inverse)', cursor: running || !prompt.trim() ? 'not-allowed' : 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
                 }}
               >
@@ -903,54 +861,22 @@ function SessionItem({ session: s, active, renaming, renameValue, onRenameValueC
   );
 }
 
-function EmptyGuide({ onSend, req }: { onSend: (prompt: string) => void; req: Requirement }) {
+function EmptyGuide({ onSend, req, panelMode }: { onSend: (prompt: string) => void; req: Requirement; panelMode?: boolean }) {
   const [prompt, setPrompt] = useState('');
-
-  const chips = [
-    '生成需求 Spec',
-    '生成设计 Spec',
-    '查看当前任务进度',
-    '分析需求可行性',
-    '帮我优化这段代码',
-    '总结最近的发布变更',
-  ];
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Center content */}
-      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px' }}>
-        <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 24 }}>
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: panelMode ? '20px 16px' : '40px 24px' }}>
+        <div style={{ fontSize: panelMode ? 13 : 24, fontWeight: panelMode ? 500 : 700, color: 'var(--text-tertiary)', marginBottom: panelMode ? 8 : 24, textAlign: 'center' }}>
           有什么我能帮你的吗？
-        </div>
-
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', maxWidth: 640 }}>
-          {chips.map((text, i) => (
-            <button
-              key={i}
-              onClick={() => onSend(text)}
-              style={{
-                padding: '8px 16px',
-                borderRadius: 20,
-                border: '1px solid var(--border-default)',
-                background: 'var(--bg-secondary)',
-                color: 'var(--text-secondary)',
-                fontSize: 13,
-                cursor: 'pointer',
-                transition: 'all 0.15s',
-              }}
-              onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}
-              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
-            >
-              {text}
-            </button>
-          ))}
         </div>
       </div>
 
       {/* Input area */}
-      <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border-default)', flexShrink: 0 }}>
-        <div style={{ maxWidth: 800, margin: '0 auto' }}>
-          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: 16, padding: '12px 16px', boxShadow: 'var(--shadow-sm)' }}>
+      <div style={{ padding: panelMode ? '12px' : '16px 20px', borderTop: '1px solid var(--border-default)', flexShrink: 0 }}>
+        <div style={panelMode ? {} : { maxWidth: 800, margin: '0 auto' }}>
+          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: panelMode ? 6 : 16, padding: panelMode ? '7px 10px' : '12px 16px', boxShadow: panelMode ? undefined : 'var(--shadow-sm)' }}>
             <textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
@@ -1040,7 +966,6 @@ export function ChatWorkspace({ req, onClose, panelMode }: { req: Requirement; o
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [rightPanel, setRightPanel] = useState<'spec' | 'design' | 'tasks' | 'analysis' | null>(null);
-  const [sessionInitialMode, setSessionInitialMode] = useState<OutputMode | undefined>(undefined);
   const didInit = useRef(false);
 
   const availableAgents = Object.entries(avail?.agents ?? {})
@@ -1081,7 +1006,6 @@ export function ChatWorkspace({ req, onClose, panelMode }: { req: Requirement; o
       {
         onSuccess: (s) => {
           setActiveSession(s);
-          setSessionInitialMode(autoMode);
         },
       }
     );
@@ -1100,7 +1024,6 @@ export function ChatWorkspace({ req, onClose, panelMode }: { req: Requirement; o
           setNewAgent('');
           setNewOutputMode('chat');
           setShowNewPanel(false);
-          setSessionInitialMode(outputMode !== 'chat' ? outputMode : undefined);
         },
       }
     );
@@ -1184,14 +1107,7 @@ export function ChatWorkspace({ req, onClose, panelMode }: { req: Requirement; o
             display: 'flex', alignItems: 'center', padding: '0 12px', gap: 8,
           }}>
             <Bot size={14} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>研发助手</span>
-            <div style={{ width: 1, height: 12, background: 'var(--border-default)', flexShrink: 0 }} />
-            <span style={{
-              fontSize: 12, color: 'var(--text-tertiary)',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
-            }}>
-              {req.title.slice(0, 24)}{req.title.length > 24 ? '…' : ''}
-            </span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flex: 1 }}>AI 助手</span>
             <button
               onClick={onClose}
               style={{
@@ -1211,14 +1127,14 @@ export function ChatWorkspace({ req, onClose, panelMode }: { req: Requirement; o
             session={activeSession}
             reqId={req.id}
             req={req}
-            onClose={() => { setActiveSession(null); setSessionInitialMode(undefined); }}
+            onClose={() => setActiveSession(null)}
             onOpenPanel={setRightPanel}
             autoPrompt={autoPrompt ?? undefined}
             onAutoPromptConsumed={() => setAutoPrompt(null)}
-            initialMode={sessionInitialMode}
+            panelMode={panelMode}
           />
         ) : (
-          <EmptyGuide req={req} onSend={handleEmptySend} />
+          <EmptyGuide req={req} onSend={handleEmptySend} panelMode={panelMode} />
         )}
 
         {/* New session right-side panel */}

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { db, newId } from '../db/index.js';
+import { db, newId, nextReqId } from '../db/index.js';
+import { gitService } from '../services/git.js';
 import { canTransition, SPEC_EDIT_STAGES, type Stage } from '@devflow/shared';
 import { qualityGateService, checkTransitionSync } from '../services/qualityGate.js';
 import { rbacGuard } from '../middleware/auth.js';
@@ -107,7 +108,7 @@ requirementsRouter.post('/', async (c) => {
   const data = parsed.data;
 
 
-  const id = newId('req');
+  const id = nextReqId();
   const now = new Date().toISOString();
 
   db.prepare(
@@ -279,6 +280,46 @@ requirementsRouter.patch('/:id', async (c) => {
       actor,
       new Date().toISOString()
     );
+
+    // 5a. development 阶段：为每个关联项目自动创建 Dev 分支
+    if (data.stage === 'development') {
+      const projRows = db.prepare(
+        'SELECT rp.project, rp.dev_branch, p.path, p.branch_prefix FROM requirement_projects rp JOIN projects p ON p.name = rp.project WHERE rp.req_id = ?'
+      ).all(id) as { project: string; dev_branch: string | null; path: string; branch_prefix: string | null }[];
+
+      for (const row of projRows) {
+        if (row.path && !row.dev_branch) {
+          const prefix = row.branch_prefix ?? 'feature';
+          const branchName = `${prefix}/${id}`;
+          try {
+            await gitService.createBranch(row.path, branchName);
+            db.prepare('UPDATE requirement_projects SET dev_branch = ? WHERE req_id = ? AND project = ?').run(branchName, id, row.project);
+          } catch {
+            // non-blocking
+          }
+        }
+      }
+    }
+
+    // 5b. uat 阶段：为每个关联项目自动将 dev 分支合并到 uat 分支
+    if (data.stage === 'uat') {
+      const projRows = db.prepare(
+        'SELECT rp.project, rp.dev_branch, rp.uat_branch, p.path FROM requirement_projects rp JOIN projects p ON p.name = rp.project WHERE rp.req_id = ?'
+      ).all(id) as { project: string; dev_branch: string | null; uat_branch: string | null; path: string }[];
+
+      for (const row of projRows) {
+        if (row.path && row.dev_branch && row.uat_branch) {
+          gitService.mergeBranch(row.path, row.uat_branch, row.dev_branch)
+            .then(result => {
+              const evtId = newId('evt');
+              db.prepare(
+                `INSERT INTO events (id, req_id, type, payload, actor, created_at) VALUES (?, ?, ?, ?, ?, ?)`
+              ).run(evtId, id, 'branch_merge', JSON.stringify({ project: row.project, ...result }), 'system', new Date().toISOString());
+            })
+            .catch(() => {});
+        }
+      }
+    }
   }
 
   const updated = db.prepare('SELECT * FROM requirements WHERE id = ?').get(id) as Record<string, unknown>;

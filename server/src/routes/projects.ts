@@ -79,6 +79,26 @@ projectsRouter.delete('/:name', (c) => {
   return c.json({ ok: true });
 });
 
+// GET /projects/:name/branches
+projectsRouter.get('/:name/branches', async (c) => {
+  const name = c.req.param('name');
+  const row = db.prepare('SELECT path FROM projects WHERE name = ?').get(name) as { path: string } | undefined;
+  if (!row) return c.json({ error: 'not found' }, 404);
+  try {
+    const g = gitService.git(row.path);
+    await g.fetch(['--prune']);
+    const result = await g.branch(['-a']);
+    const branches = result.all
+      .map(b => b.replace(/^remotes\/origin\//, '').trim())
+      .filter(b => !b.startsWith('HEAD'))
+      .filter((b, i, arr) => arr.indexOf(b) === i)
+      .sort();
+    return c.json(branches);
+  } catch {
+    return c.json([]);
+  }
+});
+
 // PATCH /projects/:name
 const PatchProjectSchema = z.object({
   lang: z.string().nullable().optional(),

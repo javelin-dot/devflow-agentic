@@ -1,8 +1,25 @@
 import type { Requirement, AnalysisOutput } from '@devflow/shared';
 
-export function buildAnalysisPrompt(req: Pick<Requirement, 'id' | 'title' | 'description' | 'kind' | 'priority' | 'tags' | 'projects'>): string {
+export interface AnalysisPromptContext {
+  /** Summarized requirement spec markdown (already truncated by summarizeMarkdown). */
+  reqSpec?: string;
+  /** Summarized design spec markdown (already truncated by summarizeMarkdown). */
+  designSpec?: string;
+}
+
+export function buildAnalysisPrompt(
+  req: Pick<Requirement, 'id' | 'title' | 'description' | 'kind' | 'priority' | 'tags' | 'projects'>,
+  context: AnalysisPromptContext = {},
+): string {
   const projectList = req.projects.map(p => p.project).join(', ') || 'none';
   const tagList = req.tags.join(', ') || 'none';
+
+  const specSection = context.reqSpec
+    ? `\n\nRequirement Spec (summarized — key sections verbatim, others first-paragraph only):\n${context.reqSpec}`
+    : '';
+  const designSection = context.designSpec
+    ? `\n\nDesign Spec (summarized):\n${context.designSpec}`
+    : '';
 
   return `You are a senior software architect. Analyze the following requirement and produce a structured task breakdown.
 
@@ -12,7 +29,7 @@ Description: ${req.description || '(no description)'}
 Kind: ${req.kind}
 Priority: ${req.priority}
 Tags: ${tagList}
-Projects: ${projectList}
+Projects: ${projectList}${specSection}${designSection}
 
 Output ONLY valid JSON (no markdown, no explanation) matching this exact schema:
 {

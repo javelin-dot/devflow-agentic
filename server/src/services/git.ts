@@ -101,6 +101,31 @@ export class GitService {
   getWorktreePath(workspaceRoot: string, reqId: string, project: string): string {
     return resolve(workspaceRoot, 'worktrees', reqId, project);
   }
+
+  async createBranch(repoPath: string, branchName: string): Promise<void> {
+    const g = this.git(repoPath);
+    try {
+      await g.raw(['branch', branchName]);
+    } catch {
+      // branch already exists — ignore
+    }
+  }
+
+  async mergeBranch(repoPath: string, targetBranch: string, sourceBranch: string): Promise<{ success: boolean; message: string }> {
+    const g = this.git(repoPath);
+    const current = await this.currentBranch(repoPath);
+    try {
+      await g.checkout(targetBranch);
+      await g.merge([sourceBranch, '--no-edit']);
+      return { success: true, message: `Merged ${sourceBranch} → ${targetBranch}` };
+    } catch (err) {
+      // try to restore HEAD on failure
+      await g.checkout(current).catch(() => {});
+      return { success: false, message: String(err) };
+    } finally {
+      await g.checkout(current).catch(() => {});
+    }
+  }
 }
 
 export const gitService = new GitService();

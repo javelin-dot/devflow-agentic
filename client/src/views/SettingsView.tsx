@@ -4,7 +4,7 @@ import { UiSelect } from '../components/ui';
 import {
   useSettings, useUpdateSettings, useAgentAvailability, useTestConnection,
   useUsers, useCreateUser, useUpdateUser, useDeleteUser, useMe,
-  useProjects, useScanProjects, useDeleteProject,
+  useProjects, useScanProjects, useDeleteProject, usePatchProject,
 } from '../api/hooks';
 import type { AIProvider } from '@devflow/shared';
 import { useTheme } from '../hooks/useTheme';
@@ -384,6 +384,7 @@ function ReposTab() {
   const { data: projects = [] } = useProjects();
   const scanProjects = useScanProjects();
   const deleteProject = useDeleteProject();
+  const patchProject = usePatchProject();
   const [scanDirs, setScanDirs] = useState<string[]>([]);
   const [newDir, setNewDir] = useState('');
   const [scanResult, setScanResult] = useState<string | null>(null);
@@ -517,6 +518,21 @@ function ReposTab() {
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>分支前缀</span>
+                  <input
+                    key={p.name + '-prefix'}
+                    defaultValue={p.branchPrefix ?? ''}
+                    placeholder="feature"
+                    onBlur={e => {
+                      const v = e.target.value.trim();
+                      if ((p.branchPrefix ?? '') !== v) {
+                        patchProject.mutate({ name: p.name, patch: { branchPrefix: v || null } });
+                      }
+                    }}
+                    style={{ width: 80, padding: '2px 6px', background: 'var(--bg-secondary)', border: '1px solid var(--border-default)', borderRadius: 4, color: 'var(--text-primary)', fontSize: 11, outline: 'none' }}
+                  />
+                </div>
                 {p.branch && (
                   <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-tertiary)', padding: '2px 6px', borderRadius: 4 }}>{p.branch}</span>
                 )}

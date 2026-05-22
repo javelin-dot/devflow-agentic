@@ -1,17 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ChevronLeft, Save, Bot, Archive, GitGraph, Check, ChevronDown, PanelLeftOpen } from 'lucide-react';
+import { ChevronLeft, Save, Bot, Archive, GitGraph, Check, ChevronDown, PanelLeftOpen, Search, GitBranch, X } from 'lucide-react';
 import { STAGE_LABELS } from '@devflow/shared';
 import type { Requirement, Stage, Priority } from '@devflow/shared';
-import { useRequirement, usePatchRequirement, useProjects, useDocuments, useDocumentVersions } from '../api/hooks';
+import { useRequirement, usePatchRequirement, useProjects, useDocuments, useDocumentVersions, useProjectBranches } from '../api/hooks';
 import { VersionSelector } from '../components/VersionSelector';
 import { RequirementSpecEditor } from '../components/RequirementSpecEditor';
 import { DesignSpecEditor } from '../components/DesignSpecEditor';
 import type { RequirementSpecEditorRef } from '../components/RequirementSpecEditor';
 import type { DesignSpecEditorRef } from '../components/DesignSpecEditor';
 import { SubTaskPanel } from './SubTaskPanel';
+import { ChatWorkspace } from './ChatWorkspace';
 import { AttachmentsPanel } from '../components/AttachmentsPanel';
 import { UiEmptyState } from '../components/ui';
+
+const AI_SIDEBAR_MIN_WIDTH = 300;
 
 const STAGE_CONFIG_LABELS: Record<string, string> = {
   backlog: 'Backlog', analyzing: 'Analyzing', development: 'Dev',
@@ -35,55 +38,198 @@ type DocTab = 'spec' | 'design' | 'tasks' | 'attachments';
 
 function stageIndex(s: Stage) { return STAGES.indexOf(s); }
 
-function ProjectSelector({ req }: { req: Requirement }) {
-  const { data: allProjects = [] } = useProjects();
-  const patchReq = usePatchRequirement();
-  const linkedNames = new Set(req.projects.map(p => p.project));
+function BranchPicker({ projectName, value, placeholder, onChange }: {
+  projectName: string; value: string | null; placeholder: string; onChange: (b: string | null) => void;
+}) {
+  const { data: branches = [], isFetching } = useProjectBranches(projectName);
   const [open, setOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    function outside(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); }
+    if (open) document.addEventListener('mousedown', outside);
+    return () => document.removeEventListener('mousedown', outside);
+  }, [open]);
+
+  const filtered = branches.filter(b => b.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', gap: 6,
+          padding: '5px 8px', borderRadius: 5, cursor: 'pointer',
+          border: `1px solid ${open ? 'var(--accent-blue)' : 'var(--border-default)'}`,
+          background: 'var(--bg-secondary)', fontSize: 12, textAlign: 'left', boxSizing: 'border-box',
+          color: value ? 'var(--text-primary)' : 'var(--text-tertiary)',
+        }}
+      >
+        <GitBranch size={11} style={{ flexShrink: 0, opacity: 0.6 }} />
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {value ?? placeholder}
+        </span>
+        {value && (
+          <span
+            onClick={(e) => { e.stopPropagation(); onChange(null); }}
+            style={{ flexShrink: 0, color: 'var(--text-tertiary)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+          >
+            <X size={10} />
+          </span>
+        )}
+        <ChevronDown size={11} style={{ flexShrink: 0, opacity: 0.4, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 3px)', left: 0, right: 0, zIndex: 200,
+          background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
+          borderRadius: 7, boxShadow: '0 4px 16px rgba(0,0,0,0.14)', overflow: 'hidden',
+        }}>
+          <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Search size={11} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+            <input
+              autoFocus
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="搜索分支..."
+              style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: 'var(--text-primary)' }}
+            />
+          </div>
+          <div style={{ maxHeight: 160, overflowY: 'auto' }}>
+            {isFetching && <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--text-tertiary)' }}>加载中...</div>}
+            {!isFetching && filtered.length === 0 && <div style={{ padding: '8px 12px', fontSize: 11, color: 'var(--text-tertiary)' }}>无匹配分支</div>}
+            {filtered.map(b => (
+              <button key={b} onClick={() => { onChange(b); setOpen(false); setSearch(''); }}
+                style={{
+                  width: '100%', padding: '6px 12px', background: b === value ? 'var(--accent-blue-10)' : 'transparent',
+                  border: 'none', borderBottom: '1px solid var(--border-default)', cursor: 'pointer',
+                  textAlign: 'left', fontSize: 12,
+                  color: b === value ? 'var(--accent-blue)' : 'var(--text-primary)',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}
+                onMouseEnter={e => { if (b !== value) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)'; }}
+                onMouseLeave={e => { if (b !== value) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+              >
+                <GitBranch size={10} style={{ flexShrink: 0, opacity: 0.5 }} />
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b}</span>
+                {b === value && <Check size={10} style={{ flexShrink: 0, marginLeft: 'auto' }} />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProjectSelector({ req, isArchived }: { req: Requirement; isArchived: boolean }) {
+  const { data: allProjects = [] } = useProjects();
+  const patchReq = usePatchRequirement();
+  const [localSelected, setLocalSelected] = useState<string[]>(() => req.projects.map(p => p.project));
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Sync local state from server when closed (avoid overwriting mid-interaction)
+  useEffect(() => {
+    if (!open) setLocalSelected(req.projects.map(p => p.project));
+  }, [req.projects]);
+
+  const saveAndClose = () => {
+    setOpen(false);
+    setSearch('');
+    const serverNames = req.projects.map(p => p.project).sort().join(',');
+    const localNames = [...localSelected].sort().join(',');
+    if (serverNames === localNames) return;
+    const next = localSelected.map(name => {
+      const existing = req.projects.find(p => p.project === name);
+      return existing ?? { project: name, isPrimary: localSelected[0] === name, devBranch: null, uatBranch: null };
+    });
+    patchReq.mutate({ id: req.id, patch: { projects: next } });
+  };
+
+  useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node)) saveAndClose();
     }
     if (open) document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open]);
+  }, [open, localSelected, req.projects]);
 
   const toggle = (name: string) => {
-    const isLinked = linkedNames.has(name);
-    const next = isLinked
-      ? req.projects.filter(p => p.project !== name)
-      : [...req.projects, { project: name, isPrimary: req.projects.length === 0, devBranch: null, uatBranch: null }];
-    setSaving(true);
-    patchReq.mutate(
-      { id: req.id, patch: { projects: next.map((p, i) => ({ project: p.project, isPrimary: i === 0, devBranch: p.devBranch ?? null, uatBranch: p.uatBranch ?? null })) } },
-      { onSettled: () => setSaving(false) }
-    );
+    if (isArchived) return;
+    setLocalSelected(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
   };
 
-  const selected = req.projects.map(p => p.project);
+  const filtered = allProjects.filter(p => p.name.toLowerCase().includes(search.toLowerCase()));
+
+  const displayLabel = localSelected.length === 0
+    ? '请选择代码仓库...'
+    : localSelected.length === 1
+      ? localSelected[0]
+      : `${localSelected.length} 个仓库`;
+
+  const removeChip = (name: string) => {
+    if (isArchived) return;
+    const next = req.projects.filter(p => p.project !== name);
+    setLocalSelected(next.map(p => p.project));
+    patchReq.mutate({ id: req.id, patch: { projects: next } });
+  };
 
   return (
     <div>
       <label style={labelStyle}>关联代码仓库</label>
       <div ref={ref} style={{ position: 'relative' }}>
         <button
-          onClick={() => !saving && setOpen(o => !o)}
+          onClick={() => !isArchived && setOpen(o => !o)}
           style={{
             width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '7px 10px', borderRadius: 6, cursor: saving ? 'not-allowed' : 'pointer',
+            padding: '7px 10px', borderRadius: 6, cursor: isArchived ? 'default' : 'pointer',
             border: `1px solid ${open ? 'var(--accent-blue)' : 'var(--border-default)'}`,
-            background: 'var(--bg-secondary)', color: selected.length ? 'var(--text-primary)' : 'var(--text-tertiary)',
+            background: 'var(--bg-secondary)', color: localSelected.length > 0 ? 'var(--text-primary)' : 'var(--text-tertiary)',
             fontSize: 13, textAlign: 'left', boxSizing: 'border-box',
           }}
         >
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-            {selected.length === 0 ? '请选择代码仓库...' : selected.join('、')}
+            {displayLabel}
           </span>
           <ChevronDown size={13} style={{ flexShrink: 0, marginLeft: 6, opacity: 0.5, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
         </button>
+
+        {req.projects.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+            {req.projects.map(p => (
+              <span
+                key={p.project}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '2px 4px 2px 8px', borderRadius: 10,
+                  background: 'var(--accent-blue-10)', color: 'var(--accent-blue)',
+                  fontSize: 11, lineHeight: 1.4,
+                  border: '1px solid var(--accent-blue)',
+                }}
+              >
+                <GitGraph size={9} />
+                <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.project}</span>
+                {!isArchived && (
+                  <button
+                    onClick={() => removeChip(p.project)}
+                    style={{
+                      background: 'transparent', border: 'none', padding: 0,
+                      color: 'var(--accent-blue)', cursor: 'pointer',
+                      display: 'flex', alignItems: 'center', borderRadius: 8,
+                    }}
+                    title="移除"
+                  >
+                    <X size={11} />
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
 
         {open && (
           <div style={{
@@ -91,49 +237,112 @@ function ProjectSelector({ req }: { req: Requirement }) {
             background: 'var(--bg-secondary)', border: '1px solid var(--border-default)',
             borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', overflow: 'hidden',
           }}>
-            {allProjects.length === 0 ? (
-              <div style={{ padding: '12px 14px', fontSize: 12, color: 'var(--text-tertiary)' }}>
-                暂无可用仓库，请先在「代码仓库」中配置
-              </div>
-            ) : (
-              allProjects.map(proj => {
-                const linked = linkedNames.has(proj.name);
-                const isPrimary = req.projects.find(p => p.project === proj.name)?.isPrimary;
-                return (
-                  <button
-                    key={proj.name}
-                    onClick={() => toggle(proj.name)}
-                    style={{
-                      width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-                      padding: '8px 12px', cursor: 'pointer', textAlign: 'left',
-                      background: linked ? 'var(--accent-blue-10)' : 'transparent',
-                      border: 'none', borderBottom: '1px solid var(--border-default)',
-                      color: 'var(--text-primary)',
-                    }}
-                    onMouseEnter={(e) => { if (!linked) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)'; }}
-                    onMouseLeave={(e) => { if (!linked) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
-                  >
-                    <div style={{
-                      width: 15, height: 15, borderRadius: 3, flexShrink: 0,
-                      border: `2px solid ${linked ? 'var(--accent-blue)' : 'var(--border-default)'}`,
-                      background: linked ? 'var(--accent-blue)' : 'transparent',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {linked && <Check size={9} color="#fff" />}
-                    </div>
-                    <span style={{ fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: linked ? 'var(--accent-blue)' : 'var(--text-primary)' }}>
-                      {proj.name}
-                    </span>
-                    {isPrimary && (
-                      <span style={{ fontSize: 10, color: 'var(--accent-green)', background: 'var(--diff-add-bg)', padding: '1px 5px', borderRadius: 3, flexShrink: 0 }}>主</span>
-                    )}
-                  </button>
-                );
-              })
-            )}
+            <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Search size={12} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+              <input
+                autoFocus
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="搜索仓库..."
+                style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: 'var(--text-primary)' }}
+              />
+            </div>
+            <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+              {filtered.length === 0 ? (
+                <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--text-tertiary)' }}>
+                  {allProjects.length === 0 ? '暂无可用仓库，请先在「代码仓库」中配置' : '无匹配仓库'}
+                </div>
+              ) : (
+                filtered.map(proj => {
+                  const isSelected = localSelected.includes(proj.name);
+                  return (
+                    <button
+                      key={proj.name}
+                      onClick={() => toggle(proj.name)}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '8px 12px', cursor: 'pointer', textAlign: 'left',
+                        background: isSelected ? 'var(--accent-blue-10)' : 'transparent',
+                        border: 'none', borderBottom: '1px solid var(--border-default)',
+                        color: 'var(--text-primary)',
+                      }}
+                      onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-hover)'; }}
+                      onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; }}
+                    >
+                      <div style={{
+                        width: 14, height: 14, borderRadius: 3, flexShrink: 0,
+                        border: `2px solid ${isSelected ? 'var(--accent-blue)' : 'var(--border-default)'}`,
+                        background: isSelected ? 'var(--accent-blue)' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        {isSelected && <Check size={9} color="#fff" strokeWidth={3} />}
+                      </div>
+                      <span style={{ fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isSelected ? 'var(--accent-blue)' : 'var(--text-primary)' }}>
+                        {proj.name}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <div style={{ padding: '6px 10px', borderTop: '1px solid var(--border-default)', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                onClick={saveAndClose}
+                style={{
+                  padding: '4px 12px', borderRadius: 5, border: 'none',
+                  background: 'var(--accent-blue)', color: 'var(--text-inverse)',
+                  cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                }}
+              >
+                确认
+              </button>
+            </div>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function LinkedRepoBranches({ req, isArchived, showDev, showUat }: {
+  req: Requirement; isArchived: boolean; showDev: boolean; showUat: boolean;
+}) {
+  const patchReq = usePatchRequirement();
+  if (req.projects.length === 0) return null;
+
+  const setBranch = (projectName: string, field: 'devBranch' | 'uatBranch', value: string | null) => {
+    const next = req.projects.map(p => p.project === projectName ? { ...p, [field]: value } : p);
+    patchReq.mutate({ id: req.id, patch: { projects: next } });
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {req.projects.map(p => (
+        <div key={p.project} style={{ background: 'var(--bg-tertiary)', borderRadius: 6, padding: '8px 10px', border: '1px solid var(--border-default)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 8 }}>
+            <GitGraph size={11} color="var(--accent-blue)" />
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.project}</span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {showDev && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', width: 28, flexShrink: 0 }}>Dev</span>
+                <div style={{ flex: 1 }}>
+                  <BranchPicker projectName={p.project} value={p.devBranch} placeholder="选择 Dev 分支..." onChange={b => !isArchived && setBranch(p.project, 'devBranch', b)} />
+                </div>
+              </div>
+            )}
+            {showUat && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 10, color: 'var(--text-tertiary)', width: 28, flexShrink: 0 }}>UAT</span>
+                <div style={{ flex: 1 }}>
+                  <BranchPicker projectName={p.project} value={p.uatBranch} placeholder="选择 UAT 分支..." onChange={b => !isArchived && setBranch(p.project, 'uatBranch', b)} />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -160,6 +369,8 @@ export function RequirementDetailPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dragging, setDragging] = useState(false);
   const sidebarWidthRef = useRef(280);
+  const [aiSidebarOpen, setAiSidebarOpen] = useState(false);
+  const prevSidebarWidthRef = useRef(280);
 
   const specRef = useRef<RequirementSpecEditorRef>(null);
   const designRef = useRef<DesignSpecEditorRef>(null);
@@ -241,7 +452,9 @@ export function RequirementDetailPage() {
   const si = stageIndex(req.stage);
   const showDesign = si >= stageIndex('analyzing');
   const showTasks = si >= stageIndex('development');
-  const showProjectSelector = kind === 'standard' && !isArchived;
+  const showProjectSelector = kind === 'standard';
+  const showDevBranch = kind === 'standard' && si >= stageIndex('development');
+  const showUatBranch = kind === 'standard' && si >= stageIndex('uat');
 
   const handleSave = () => {
     setSaving(true);
@@ -327,16 +540,29 @@ export function RequirementDetailPage() {
 
         {!isArchived && (
           <button
-            onClick={() => navigate(`/workspace/${req.id}`)}
+            onClick={() => {
+              if (aiSidebarOpen) {
+                setAiSidebarOpen(false);
+                setSidebarWidth(prevSidebarWidthRef.current);
+              } else {
+                prevSidebarWidthRef.current = sidebarWidth;
+                setSidebarCollapsed(false);
+                setSidebarWidth((w) => Math.max(w, AI_SIDEBAR_MIN_WIDTH));
+                setAiSidebarOpen(true);
+              }
+            }}
             style={{
               display: 'flex', alignItems: 'center', gap: 5,
-              padding: '5px 12px', borderRadius: 6, border: '1px solid var(--border-default)',
-              background: 'transparent', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12, fontWeight: 500, flexShrink: 0,
+              padding: '5px 12px', borderRadius: 6,
+              border: `1px solid ${aiSidebarOpen ? 'var(--accent-blue)' : 'var(--border-default)'}`,
+              background: aiSidebarOpen ? 'var(--accent-blue-10)' : 'transparent',
+              color: aiSidebarOpen ? 'var(--accent-blue)' : 'var(--text-secondary)',
+              cursor: 'pointer', fontSize: 12, fontWeight: 500, flexShrink: 0,
             }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; }}
+            onMouseEnter={(e) => { if (!aiSidebarOpen) { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent-blue)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--accent-blue)'; } }}
+            onMouseLeave={(e) => { if (!aiSidebarOpen) { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-default)'; (e.currentTarget as HTMLButtonElement).style.color = 'var(--text-secondary)'; } }}
           >
-            <Bot size={13} />研发助手
+            <Bot size={13} />AI 助手
           </button>
         )}
       </div>
@@ -405,6 +631,28 @@ export function RequirementDetailPage() {
               <PanelLeftOpen size={18} />
             </button>
           </div>
+        ) : aiSidebarOpen ? (
+          <div style={{
+            width: sidebarWidth, flexShrink: 0, borderRight: '1px solid var(--border-default)',
+            display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative',
+          }}>
+            <ChatWorkspace
+              req={req}
+              panelMode
+              onClose={() => {
+                setAiSidebarOpen(false);
+                setSidebarWidth(prevSidebarWidthRef.current);
+              }}
+            />
+            {/* Drag handle */}
+            <div
+              onMouseDown={(e) => { e.preventDefault(); setDragging(true); }}
+              style={{
+                position: 'absolute', right: 0, top: 0, bottom: 0, width: 4,
+                cursor: 'col-resize', zIndex: 10,
+              }}
+            />
+          </div>
         ) : (
           <>
             <div style={{
@@ -413,8 +661,6 @@ export function RequirementDetailPage() {
               opacity: isArchived ? 0.8 : 1, position: 'relative',
             }}>
               <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {showProjectSelector && <ProjectSelector req={req} />}
-
                 <div>
                   <label style={labelStyle}>需求标题</label>
                   <input value={title} onChange={(e) => !isArchived && setTitle(e.target.value)}
@@ -462,6 +708,11 @@ export function RequirementDetailPage() {
                   </div>
                 </div>
 
+                {showProjectSelector && <ProjectSelector req={req} isArchived={isArchived} />}
+                {showProjectSelector && (showDevBranch || showUatBranch) && req.projects.length > 0 && (
+                  <LinkedRepoBranches req={req} isArchived={isArchived} showDev={showDevBranch} showUat={showUatBranch} />
+                )}
+
                 <div>
                   <label style={labelStyle}>需求描述</label>
                   <textarea value={description} onChange={(e) => !isArchived && setDescription(e.target.value)}
@@ -487,20 +738,6 @@ export function RequirementDetailPage() {
                   {req.archivedAt && <MetaRow label="归档时间" value={new Date(req.archivedAt).toLocaleDateString('zh-CN')} color="var(--text-tertiary)" />}
                   {req.plannedReleaseDate && <MetaRow label="计划发布" value={new Date(req.plannedReleaseDate).toLocaleDateString('zh-CN')} />}
                   {req.releasedAt && <MetaRow label="发布时间" value={new Date(req.releasedAt).toLocaleDateString('zh-CN')} color="var(--accent-green)" />}
-                  {req.projects.length > 0 && (
-                    <div>
-                      <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>关联仓库</span>
-                      <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        {req.projects.map(p => (
-                          <div key={p.project} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <GitGraph size={11} color="var(--accent-blue)" />
-                            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{p.project}</span>
-                            {p.isPrimary && <span style={{ fontSize: 10, color: 'var(--accent-green)', background: 'var(--diff-add-bg)', padding: '1px 4px', borderRadius: 3 }}>主</span>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
 

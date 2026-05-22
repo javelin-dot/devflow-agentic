@@ -65,6 +65,20 @@ export function bootstrap(): void {
   insertSetting.run('workspaceRoot', process.env.LK_WORKSPACE_ROOT ?? process.cwd());
   insertSetting.run('port', '4000');
 
+  // 需求编号序列表（6位自增）
+  db.exec(`CREATE TABLE IF NOT EXISTS req_seq (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    next_val INTEGER NOT NULL DEFAULT 0
+  )`);
+  db.prepare('INSERT OR IGNORE INTO req_seq VALUES (1, 0)').run();
+  // 若已有 6 位纯数字格式 ID，初始化序列到最大值
+  db.prepare(`
+    UPDATE req_seq SET next_val = MAX(next_val, COALESCE((
+      SELECT MAX(CAST(id AS INTEGER)) FROM requirements
+      WHERE id GLOB '[0-9][0-9][0-9][0-9][0-9][0-9]'
+    ), 0))
+  `).run();
+
   // projects 表
   db.exec(`CREATE TABLE IF NOT EXISTS projects (
     name TEXT PRIMARY KEY,
@@ -497,4 +511,11 @@ export function newId(prefix: string): string {
   let id = '';
   for (let i = 0; i < 8; i++) id += chars[Math.floor(Math.random() * chars.length)];
   return `${prefix}_${id}`;
+}
+
+// 生成 6 位自增需求编号（000001, 000002, ...）
+export function nextReqId(): string {
+  db.prepare('UPDATE req_seq SET next_val = next_val + 1').run();
+  const row = db.prepare('SELECT next_val FROM req_seq').get() as { next_val: number };
+  return String(row.next_val).padStart(6, '0');
 }

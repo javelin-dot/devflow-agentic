@@ -4,7 +4,10 @@ import { db, newId } from '../db/index.js';
 import { createAgentProcess } from '../agents/SessionManager.js';
 import { taskScheduler } from '../services/scheduler.js';
 import { buildAnalysisPrompt, parseAnalysisOutput } from '../services/analysis.js';
+import { summarizeMarkdown } from '../services/specSummarize.js';
 import type { RequirementAnalysis, Requirement, AnalysisOutput } from '@devflow/shared';
+
+const SPEC_SUMMARY_MAX_CHARS = 8000;
 
 export const analysisRouter = new Hono();
 
@@ -68,7 +71,24 @@ analysisRouter.post('/start', async (c) => {
     })),
   };
 
-  const basePrompt = data.prompt ?? buildAnalysisPrompt(req);
+  // Pull latest approved/draft requirement spec and design spec so subtask planning
+  // sees the actual decisions made upstream, not just the raw requirement card.
+  const reqDoc = db.prepare(
+    `SELECT content FROM documents
+     WHERE req_id=? AND type='requirement_spec' AND deleted_at IS NULL
+     ORDER BY updated_at DESC LIMIT 1`
+  ).get(data.reqId) as { content: string } | undefined;
+  const designDoc = db.prepare(
+    `SELECT content FROM documents
+     WHERE req_id=? AND type='design_spec' AND deleted_at IS NULL
+     ORDER BY updated_at DESC LIMIT 1`
+  ).get(data.reqId) as { content: string } | undefined;
+  const promptContext = {
+    reqSpec: reqDoc ? summarizeMarkdown(reqDoc.content, SPEC_SUMMARY_MAX_CHARS) : undefined,
+    designSpec: designDoc ? summarizeMarkdown(designDoc.content, SPEC_SUMMARY_MAX_CHARS) : undefined,
+  };
+
+  const basePrompt = data.prompt ?? buildAnalysisPrompt(req, promptContext);
   const now = new Date().toISOString();
 
   const analyses: RequirementAnalysis[] = [];
